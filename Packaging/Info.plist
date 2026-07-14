@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleDisplayName</key><string>ToskVoice</string>
+    <key>CFBundleExecutable</key><string>ToskVoice</string>
+    <key>CFBundleIdentifier</key><string>de.tobisk.toskvoice</string>
+    <key>CFBundleIconFile</key><string>ToskVoice.icns</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>ToskVoice</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>ToskVoice Editor Handoff</string>
+            <key>CFBundleURLSchemes</key><array><string>toskvoice</string></array>
+        </dict>
+    </array>
+    <key>LSMinimumSystemVersion</key><string>26.0</string>
+    <key>LSUIElement</key><true/>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSMicrophoneUsageDescription</key><string>ToskVoice uses the selected microphone for local speech-to-text dictation.</string>
+    <key>NSSpeechRecognitionUsageDescription</key><string>ToskVoice transcribes speech locally into text you choose to insert or save.</string>
+    <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Tobisk</string>
+</dict>
+</plist>

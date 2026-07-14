@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+
+APP_NAME="ToskVoice"
+BUNDLE_IDENTIFIER="de.tobisk.toskvoice"
+SIGNING_IDENTITY="${TOSKVOICE_SIGNING_IDENTITY:--}"
+VERSION="${TOSKVOICE_VERSION:-0.1.0}"
+CONFIGURATION="debug"
+ACTION="${1:-build}"
+SUBACTION="${2:-}"
+DERIVED="$ROOT/.build/app"
+APP="$DERIVED/$APP_NAME.app"
+ARTIFACTS="$ROOT/artifacts"
+LAME_SOURCE="$ROOT/Vendor/lame/lame"
+LAME_LICENSE_DIR="$ROOT/Vendor/lame"
+
+if [[ -d /Applications/Xcode.app/Contents/Developer ]]; then
+  export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+fi
+
+export CLANG_MODULE_CACHE_PATH="$ROOT/.build/module-cache"
+export SWIFTPM_MODULECACHE_OVERRIDE="$ROOT/.build/module-cache"
+mkdir -p "$CLANG_MODULE_CACHE_PATH"
+
+ensure_toolchain() {
+  if ! command -v xcrun >/dev/null 2>&1 || ! command -v swift >/dev/null 2>&1; then
+    echo "Apple Command Line Tools are required; opening the installer."
+    xcode-select --install || true
+    echo "Run ./build again after the installer completes."
+    exit 1
+  fi
+
+  local sdk_major
+  sdk_major="$(xcrun --sdk macosx --show-sdk-version | cut -d. -f1)"
+  if [[ "$sdk_major" -lt 26 ]]; then
+    echo "ToskVoice requires the macOS 26 SDK or newer."
+    exit 1
+  fi
+}
+
+ensure_packaging_dependencies() {
+  if [[ -x "$LAME_SOURCE" ]]; then
+    return
+  fi
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "Homebrew is required once to obtain the self-contained MP3 encoder."
+    echo "Install Homebrew from https://brew.sh and run ./build again."
+    exit 1
+  fi
+  brew bundle --file "$ROOT/Brewfile"
+  LAME_SOURCE="$(command -v lame)"
+  LAME_LICENSE_DIR="$(dirname "$(dirname "$(realpath "$LAME_SOURCE")")")"
+}
+
+package_app() {
+  local configuration="$1"
+  local bin_path
+  ensure_packaging_dependencies
+  bin_path="$(swift build --disable-sandbox -c "$configuration" --product "$APP_NAME" --show-bin-path)"
+  swift build --disable-sandbox -c "$configuration" --product "$APP_NAME"
+  swift build --disable-sandbox -c "$configuration" --product toskvoice-agent
+
+  rm -rf "$APP"
+  mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources/Integrations" "$APP/Contents/Resources/Licenses"
+  cp "$ROOT/Packaging/Info.plist" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${TOSKVOICE_BUILD_NUMBER:-1}" "$APP/Contents/Info.plist"
+  cp "$bin_path/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
+  cp "$ROOT/Assets/ToskVoice.icns" "$APP/Contents/Resources/ToskVoice.icns"
+  cp "$bin_path/toskvoice-agent" "$APP/Contents/Helpers/toskvoice-agent"
+  ditto "$ROOT/Integrations/obsidian" "$APP/Contents/Resources/Integrations/obsidian"
+  ditto "$ROOT/Packaging/zed" "$APP/Contents/Resources/Integrations/zed"
+  cp "$LAME_SOURCE" "$APP/Contents/Resources/lame"
+  cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/Third-Party-Notices.md"
+  cp "$ROOT/.build/checkouts/argmax-oss-swift/LICENSE" "$APP/Contents/Resources/Licenses/Argmax-LICENSE"
+  cp "$ROOT/.build/checkouts/argmax-oss-swift/NOTICES" "$APP/Contents/Resources/Licenses/Argmax-NOTICES"
+  cp "$LAME_LICENSE_DIR/LICENSE" "$APP/Contents/Resources/Licenses/LAME-LICENSE"
+  cp "$LAME_LICENSE_DIR/COPYING" "$APP/Contents/Resources/Licenses/LAME-COPYING"
+
+  find "$bin_path" -maxdepth 1 -type d -name '*.bundle' -exec cp -R {} "$APP/Contents/Resources/" \;
+  codesign --force --sign "$SIGNING_IDENTITY" "$APP/Contents/Helpers/toskvoice-agent"
+  codesign --force --sign "$SIGNING_IDENTITY" "$APP/Contents/Resources/lame"
+  codesign --force --sign "$SIGNING_IDENTITY" --identifier "$BUNDLE_IDENTIFIER" "$APP"
+}
+
+install_app() {
+  local destination="/Applications/$APP_NAME.app"
+  pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+  if [[ -w /Applications ]]; then
+    ditto "$APP" "$destination"
+  else
+    osascript -e "do shell script \"/usr/bin/ditto '$APP' '$destination'\" with administrator privileges"
+  fi
+  open "$destination"
+  echo "Installed and opened $destination"
+}
+
+ensure_toolchain
+
+case "$ACTION" in
+  build)
+    package_app debug
+    echo "Built $APP"
+    ;;
+  open)
+    package_app debug
+    pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+    open "$APP"
+    echo "Opened $APP"
+    ;;
+  test)
+    swift test --disable-sandbox
+    ;;
+  archive)
+    CONFIGURATION="release"
+    package_app release
+    mkdir -p "$ARTIFACTS"
+    ARCHIVE="$ARTIFACTS/$APP_NAME-$VERSION-macos-arm64.zip"
+    rm -f "$ARCHIVE"
+    ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
+    shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+    echo "Created $ARCHIVE"
+    if [[ "$SUBACTION" == "install" ]]; then
+      install_app
+    fi
+    ;;
+  install)
+    package_app release
+    install_app
+    ;;
+  clean)
+    swift package clean
+    rm -rf "$DERIVED" "$ARTIFACTS"
+    ;;
+  *)
+    echo "Usage: ./build [build|open|test|archive [install]|install|clean]"
+    exit 2
+    ;;
+esac
