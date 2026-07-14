@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./build test
+      - run: ./build archive
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ToskVoice-macos-arm64
+          path: artifacts/*
