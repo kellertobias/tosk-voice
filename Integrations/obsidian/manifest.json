@@ -1,0 +1,9 @@
+{
+  "id": "tosk-voice",
+  "name": "ToskVoice",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Send selected text or a voice editing request to ToskVoice.",
+  "author": "Tobisk",
+  "isDesktopOnly": true
+}

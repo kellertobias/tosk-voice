@@ -1,0 +1,10 @@
+{
+  "agent_servers": {
+    "toskvoice": {
+      "type": "custom",
+      "command": "/Applications/ToskVoice.app/Contents/Helpers/toskvoice-agent",
+      "args": [],
+      "env": {}
+    }
+  }
+}
