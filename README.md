@@ -9,10 +9,11 @@ ToskVoice is a native, local-first macOS menu-bar dictation app for Apple Silico
 Install the current release with Homebrew:
 
 ```sh
-brew install --cask --no-quarantine https://raw.githubusercontent.com/kellertobias/tosk-voice/main/Packaging/homebrew/tosk-voice.rb
+brew tap kellertobias/tosk-voice https://github.com/kellertobias/tosk-voice.git
+brew install --cask tosk-voice
 ```
 
-The first launch may require granting permissions under **Settings -> Privacy**. After granting Accessibility, use **Restart ToskVoice** in the Privacy tab so macOS applies the change to the running app.
+The current release is not yet notarized. If macOS blocks the first launch, try to open ToskVoice once, then go to **System Settings -> Privacy & Security** and choose **Open Anyway**. The first launch may also require granting Microphone and Accessibility permissions. After granting Accessibility, use **Restart ToskVoice** in the Privacy tab so macOS applies the change to the running app.
 
 Shortcuts are configurable in Settings. The defaults are `Control-Option-Space` for toggle and `Control-Option-D` for push-to-talk.
 
@@ -98,11 +99,14 @@ Use **Install Obsidian Companion...** to copy the plugin into a chosen vault. It
 
 ## Homebrew
 
-The cask template lives at `Packaging/homebrew/tosk-voice.rb` and installs release archives from [kellertobias/tosk-voice](https://github.com/kellertobias/tosk-voice). Until a dedicated tap and notarized archive are available, install the cask directly from this repository:
+The cask lives at `Casks/tosk-voice.rb` and installs release archives from [kellertobias/tosk-voice](https://github.com/kellertobias/tosk-voice). Until a dedicated tap repository is available, add this repository as a custom tap and install the cask from it:
 
 ```sh
-brew install --cask --no-quarantine https://raw.githubusercontent.com/kellertobias/tosk-voice/main/Packaging/homebrew/tosk-voice.rb
+brew tap kellertobias/tosk-voice https://github.com/kellertobias/tosk-voice.git
+brew install --cask tosk-voice
 ```
+
+Homebrew no longer supports `--no-quarantine`. Because the current archive is not notarized, launch ToskVoice once and, if macOS blocks it, approve it under **System Settings -> Privacy & Security -> Open Anyway**.
 
 A local archive can also be installed with `./build archive install`.
 

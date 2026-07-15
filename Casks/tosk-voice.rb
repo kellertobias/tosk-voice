@@ -7,11 +7,13 @@ cask "tosk-voice" do
   desc "Native, local-first dictation for modern Macs"
   homepage "https://github.com/kellertobias/tosk-voice"
 
-  depends_on macos: ">= :tahoe"
+  depends_on macos: :tahoe
+
   app "ToskVoice.app"
 
   caveats <<~EOS
-    This early archive is ad-hoc signed and not notarized. Install it with:
-      brew install --cask --no-quarantine https://raw.githubusercontent.com/kellertobias/tosk-voice/main/Packaging/homebrew/tosk-voice.rb
+    This early archive is not notarized. If macOS blocks the first launch,
+    try to open ToskVoice once, then approve it under:
+      System Settings -> Privacy & Security -> Open Anyway
   EOS
 end
