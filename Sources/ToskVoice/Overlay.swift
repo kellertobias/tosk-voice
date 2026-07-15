@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 final class NonActivatingPanel: NSPanel {
@@ -10,11 +11,16 @@ final class NonActivatingPanel: NSPanel {
 final class OverlayController {
     private let panel: NonActivatingPanel
     private weak var statusButton: NSStatusBarButton?
+    private var currentPlacement: OverlayPlacement = .menuBar
+    private var draftObservation: AnyCancellable?
+
+    private static let compactSize = NSSize(width: 520, height: 188)
+    private static let editorSize = NSSize(width: 520, height: 318)
 
     init(model: AppModel, statusButton: NSStatusBarButton?) {
         self.statusButton = statusButton
         panel = NonActivatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 188),
+            contentRect: NSRect(origin: .zero, size: Self.compactSize),
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -28,15 +34,32 @@ final class OverlayController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.animationBehavior = .utilityWindow
         panel.contentView = NSHostingView(rootView: OverlayView(model: model))
+        draftObservation = model.$finalizedText
+            .map { !$0.isEmpty }
+            .removeDuplicates()
+            .sink { [weak self] expanded in
+                self?.setEditorExpanded(expanded)
+            }
     }
 
     func show(at placement: OverlayPlacement) {
+        currentPlacement = placement
         position(placement)
         panel.orderFrontRegardless()
     }
 
     func hide() {
         panel.orderOut(nil)
+    }
+
+    private func setEditorExpanded(_ expanded: Bool) {
+        let size = expanded ? Self.editorSize : Self.compactSize
+        guard panel.frame.size != size else { return }
+        var frame = panel.frame
+        frame.origin.y = frame.maxY - size.height
+        frame.size = size
+        panel.setFrame(frame, display: true, animate: panel.isVisible)
+        position(currentPlacement)
     }
 
     private func position(_ placement: OverlayPlacement) {
@@ -94,6 +117,7 @@ private struct OverlayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        let showsLiveDraft = !model.finalizedText.isEmpty
         VStack(spacing: 13) {
             HStack(spacing: 10) {
                 stateIndicator
@@ -137,16 +161,45 @@ private struct OverlayView: View {
                 }
             }
 
-            WaveformView(levels: model.waveform, active: model.state == .listening, reduceMotion: reduceMotion)
+            WaveformView(
+                levels: model.waveform,
+                active: model.state == .listening || model.state == .correcting,
+                reduceMotion: reduceMotion
+            )
                 .frame(height: 44)
 
-            LiveTranscriptView(
-                finalizedText: model.finalizedText,
-                volatileText: model.volatileText,
-                statusDetail: model.statusDetail
-            )
-            .font(.system(size: 15, weight: .regular, design: .rounded))
-            .frame(height: 42)
+            if showsLiveDraft {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Label("Live draft", systemImage: "text.badge.checkmark")
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        if model.state == .correcting {
+                            Label("Model editing", systemImage: "sparkles")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    LiveTranscriptView(
+                        finalizedText: model.finalizedText,
+                        volatileText: model.volatileText,
+                        statusDetail: model.statusDetail
+                    )
+                    .font(.system(size: 15, weight: .regular, design: .rounded))
+                    .frame(height: 126)
+                }
+                .padding(10)
+                .background(.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else {
+                LiveTranscriptView(
+                    finalizedText: model.finalizedText,
+                    volatileText: model.volatileText,
+                    statusDetail: model.statusDetail
+                )
+                .font(.system(size: 15, weight: .regular, design: .rounded))
+                .frame(height: 42)
+            }
 
             HStack {
                 Label(model.profile.speechMode.label, systemImage: "character.bubble")
@@ -157,7 +210,8 @@ private struct OverlayView: View {
             .foregroundStyle(.secondary)
         }
         .padding(16)
-        .frame(width: 520, height: 188)
+        .frame(width: 520, height: showsLiveDraft ? 318 : 188)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: showsLiveDraft)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.16), lineWidth: 0.5))
     }

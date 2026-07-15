@@ -143,6 +143,11 @@ struct DictationProfile: Codable, Identifiable, Equatable, Sendable {
     var overlayPlacement: OverlayPlacement
     var glossary: [String]
     var diarizationEnabled: Bool
+    var spokenCorrectionsEnabled: Bool? = true
+    var condensedOutputEnabled: Bool? = false
+
+    var usesSpokenCorrections: Bool { spokenCorrectionsEnabled ?? true }
+    var producesCondensedOutput: Bool { condensedOutputEnabled ?? false }
 
     static let standard = DictationProfile(
         id: UUID(),
@@ -153,7 +158,9 @@ struct DictationProfile: Codable, Identifiable, Equatable, Sendable {
         markdownDisplayPath: nil,
         overlayPlacement: .menuBar,
         glossary: ["Apos", "Epos", "Tobisk", "ToskVoice"],
-        diarizationEnabled: false
+        diarizationEnabled: false,
+        spokenCorrectionsEnabled: true,
+        condensedOutputEnabled: false
     )
 }
 

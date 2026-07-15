@@ -79,6 +79,10 @@ final class AppModel: ObservableObject {
         statusDetail = profile.name
         onOverlayRequested?(profile.overlayPlacement)
         onMenuNeedsUpdate?()
+        await correctionService.beginDictation(
+            enableEditing: profile.usesSpokenCorrections,
+            enablePolishing: profile.producesCondensedOutput
+        )
 
         do {
             if profile.diarizationEnabled {
@@ -117,6 +121,7 @@ final class AppModel: ObservableObject {
             fail(error.localizedDescription)
             await speechSession.cancel()
             await whisperSession.cancel()
+            await correctionService.endDictation()
         }
     }
 
@@ -141,12 +146,14 @@ final class AppModel: ObservableObject {
         volatileText = ""
         finalizedText = ledger.text
         await commit()
+        await correctionService.endDictation()
     }
 
     func cancel() async {
         guard state.isActive else { return }
         await speechSession.cancel()
         await whisperSession.cancel()
+        await correctionService.endDictation()
         activeEngine = nil
         ledger = TranscriptLedger()
         timedUtterances = []
@@ -187,6 +194,20 @@ final class AppModel: ObservableObject {
         onMenuNeedsUpdate?()
     }
 
+    func toggleSpokenCorrections() {
+        var value = preferences.selectedProfile
+        value.spokenCorrectionsEnabled = !value.usesSpokenCorrections
+        preferences.selectedProfile = value
+        onMenuNeedsUpdate?()
+    }
+
+    func toggleCondensedOutput() {
+        var value = preferences.selectedProfile
+        value.condensedOutputEnabled = !value.producesCondensedOutput
+        preferences.selectedProfile = value
+        onMenuNeedsUpdate?()
+    }
+
     private func receive(level: Float) {
         waveform.removeFirst()
         waveform.append(max(0.04, level))
@@ -209,6 +230,13 @@ final class AppModel: ObservableObject {
     }
 
     private func processFinalUtterance(_ text: String, timing: TimedUtterance? = nil) async {
+        guard preferences.selectedProfile.usesSpokenCorrections else {
+            ledger.append(text)
+            if let timing { timedUtterances.append(timing) }
+            finalizedText = ledger.text
+            return
+        }
+
         let normalized = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
         if ["cancel correction", "never mind", "korrektur abbrechen", "vergiss es"].contains(normalized) {
             pendingCorrection = nil
@@ -219,7 +247,7 @@ final class AppModel: ObservableObject {
         if let pendingCorrection {
             state = .correcting
             let clarified = "\(pendingCorrection)\nCLARIFICATION: \(text)"
-            if let revised = await correctionService.revise(transcript: ledger.text, command: clarified) {
+            if let revised = await correctionService.integrate(transcript: ledger.text, utterance: clarified) {
                 ledger.replaceAll(with: revised)
                 self.pendingCorrection = nil
                 finalizedText = ledger.text
@@ -235,18 +263,28 @@ final class AppModel: ObservableObject {
             statusDetail = "Correction applied"
             return
         }
-        if await correctionService.shouldAttemptSemanticCorrection(text), !ledger.text.isEmpty {
+        let likelyCorrection = CorrectionTrigger.shouldAskModelToEdit(text)
+        if LiveDraftRouting.shouldUseModel(hasStagedText: !ledger.text.isEmpty, utterance: text) {
             state = .correcting
-            if let revised = await correctionService.revise(transcript: ledger.text, command: text) {
+            statusDetail = likelyCorrection ? "Applying spoken correction…" : "Updating live draft…"
+            if let revised = await correctionService.integrate(transcript: ledger.text, utterance: text) {
                 ledger.replaceAll(with: revised)
+                if let timing { timedUtterances.append(timing) }
                 finalizedText = ledger.text
                 state = stopRequested ? .finalizing : .listening
-                statusDetail = "Correction applied"
+                statusDetail = likelyCorrection ? "Correction applied" : "Live draft updated"
                 return
             }
             state = stopRequested ? .finalizing : .listening
-            pendingCorrection = text
-            askForCorrectionClarification()
+            if likelyCorrection {
+                pendingCorrection = text
+                askForCorrectionClarification()
+            } else {
+                ledger.append(text)
+                if let timing { timedUtterances.append(timing) }
+                finalizedText = ledger.text
+                statusDetail = "Added without model editing"
+            }
             return
         }
         ledger.append(text)
@@ -276,7 +314,7 @@ final class AppModel: ObservableObject {
     }
 
     private func commit() async {
-        let text = ledger.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = ledger.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             capturedTarget?.removeListeningPlaceholder()
             capturedTarget = nil
@@ -287,8 +325,20 @@ final class AppModel: ObservableObject {
         }
 
         let profile = preferences.selectedProfile
+        if profile.producesCondensedOutput {
+            state = .correcting
+            statusDetail = "Polishing final text…"
+            onMenuNeedsUpdate?()
+            if let condensed = await correctionService.condense(text) {
+                ledger.replaceAll(with: condensed)
+                finalizedText = ledger.text
+                text = condensed
+            }
+        }
         var destinationDescription = "Focused text field"
         var succeeded = false
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
         switch profile.destination {
         case .focusedField:
             if let capturedTarget {
@@ -297,8 +347,6 @@ final class AppModel: ObservableObject {
                     : capturedTarget.insert(text)
             }
             if !succeeded {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
                 destinationDescription = "Clipboard fallback"
             }
         case .markdown:

@@ -114,6 +114,18 @@ final class MenuController: NSObject, NSMenuDelegate {
         speakers.state = model.profile.diarizationEnabled ? .on : .off
         speakers.toolTip = "The optional SpeakerKit model downloads when first enabled."
         menu.addItem(speakers)
+
+        let corrections = NSMenuItem(title: "Spoken Corrections", action: #selector(toggleSpokenCorrections), keyEquivalent: "")
+        corrections.target = self
+        corrections.state = model.profile.usesSpokenCorrections ? .on : .off
+        corrections.toolTip = "Apply spoken corrections to the staged transcript immediately with Apple’s on-device model."
+        menu.addItem(corrections)
+
+        let condensedOutput = NSMenuItem(title: "Polish Final Text", action: #selector(toggleCondensedOutput), keyEquivalent: "")
+        condensedOutput.target = self
+        condensedOutput.state = model.profile.producesCondensedOutput ? .on : .off
+        condensedOutput.toolTip = "Use Apple’s on-device language model to merge corrections and condense the final transcript."
+        menu.addItem(condensedOutput)
         menu.addItem(.separator())
 
         let ttsItem = NSMenuItem(title: "Text to Speech…", action: #selector(showTextToSpeech), keyEquivalent: "")
@@ -169,6 +181,8 @@ final class MenuController: NSObject, NSMenuDelegate {
     @objc private func showTextToSpeech() { textToSpeech.show() }
     @objc private func showVoiceEditor() { voiceEditor.show() }
     @objc private func toggleDiarization() { model.toggleDiarization() }
+    @objc private func toggleSpokenCorrections() { model.toggleSpokenCorrections() }
+    @objc private func toggleCondensedOutput() { model.toggleCondensedOutput() }
     @objc private func quitApp() { NSApp.terminate(nil) }
 }
 
