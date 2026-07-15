@@ -12,6 +12,6 @@ cask "tosk-voice" do
 
   caveats <<~EOS
     This early archive is ad-hoc signed and not notarized. Install it with:
-      brew install --cask --no-quarantine kellertobias/tap/tosk-voice
+      brew install --cask --no-quarantine https://raw.githubusercontent.com/kellertobias/tosk-voice/main/Packaging/homebrew/tosk-voice.rb
   EOS
 end

@@ -4,6 +4,18 @@
 
 ToskVoice is a native, local-first macOS menu-bar dictation app for Apple Silicon Macs running macOS 26 or newer. It focuses on fast voice input, visible live feedback, local speech models, and privacy-preserving editor workflows.
 
+## Quick Start
+
+Install the current release with Homebrew:
+
+```sh
+brew install --cask --no-quarantine https://raw.githubusercontent.com/kellertobias/tosk-voice/main/Packaging/homebrew/tosk-voice.rb
+```
+
+The first launch may require granting permissions under **Settings -> Privacy**. After granting Accessibility, use **Restart ToskVoice** in the Privacy tab so macOS applies the change to the running app.
+
+Shortcuts are configurable in Settings. The defaults are `Control-Option-Space` for toggle and `Control-Option-D` for push-to-talk.
+
 ## Features
 
 - Nonactivating dictation overlay that keeps focus in the target application.
@@ -29,23 +41,18 @@ All downloaded speech models run locally after installation. External editor pro
 
 - Apple Silicon Mac.
 - macOS 26 or newer.
-- Xcode with the macOS 26 SDK for local builds.
 - Microphone permission for recording.
 - Accessibility permission for inserting dictated text and posting fallback paste events.
 
-## Quick Start
+## Development
 
-Build and open the app:
+Local development builds require Xcode with the macOS 26 SDK.
+
+Build and open the app from source:
 
 ```sh
 ./build open
 ```
-
-The first launch may require granting permissions under **Settings -> Privacy**. After granting Accessibility, use **Restart ToskVoice** in the Privacy tab so macOS applies the change to the running app.
-
-Shortcuts are configurable in Settings. The defaults are `Control-Option-Space` for toggle and `Control-Option-D` for push-to-talk.
-
-## Development
 
 Run tests:
 
@@ -91,7 +98,13 @@ Use **Install Obsidian Companion...** to copy the plugin into a chosen vault. It
 
 ## Homebrew
 
-The cask template lives at `Packaging/homebrew/tosk-voice.rb` and targets `kellertobias/homebrew-tap`. Before notarization, releases require Homebrew's `--no-quarantine` option as documented by the cask. A local archive can also be installed with `./build archive install`.
+The cask template lives at `Packaging/homebrew/tosk-voice.rb` and installs release archives from [kellertobias/tosk-voice](https://github.com/kellertobias/tosk-voice). Until a dedicated tap and notarized archive are available, install the cask directly from this repository:
+
+```sh
+brew install --cask --no-quarantine https://raw.githubusercontent.com/kellertobias/tosk-voice/main/Packaging/homebrew/tosk-voice.rb
+```
+
+A local archive can also be installed with `./build archive install`.
 
 ## Privacy
 
