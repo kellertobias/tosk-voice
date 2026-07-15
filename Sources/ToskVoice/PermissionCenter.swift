@@ -6,7 +6,6 @@ import CoreGraphics
 @MainActor
 final class PermissionCenter: ObservableObject {
     @Published private(set) var microphoneGranted = false
-    @Published private(set) var inputMonitoringGranted = false
     @Published private(set) var accessibilityGranted = false
 
     init() {
@@ -15,7 +14,6 @@ final class PermissionCenter: ObservableObject {
 
     func refresh() {
         microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        inputMonitoringGranted = CGPreflightListenEventAccess()
         accessibilityGranted = AXIsProcessTrusted()
     }
 
@@ -26,22 +24,29 @@ final class PermissionCenter: ObservableObject {
         refresh()
     }
 
-    func requestInputMonitoring() {
-        _ = CGRequestListenEventAccess()
-        refresh()
-        if !inputMonitoringGranted {
-            openPrivacySettings("Privacy_ListenEvent")
-        }
-    }
-
     func requestAccessibility() {
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
+        _ = CGRequestPostEventAccess()
         refresh()
     }
 
     func openPrivacySettings(_ pane: String) {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    func restartApplication() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(
+            at: Bundle.main.bundleURL,
+            configuration: configuration
+        ) { _, error in
+            guard error == nil else { return }
+            Task { @MainActor in
+                NSApplication.shared.terminate(nil)
+            }
+        }
     }
 }

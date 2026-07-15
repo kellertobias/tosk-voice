@@ -59,7 +59,8 @@ final class PreferencesStore: ObservableObject {
         let profile = DictationProfile(
             id: UUID(), name: "New Profile", speechMode: .english, destination: .focusedField,
             markdownBookmark: nil, markdownDisplayPath: nil, overlayPlacement: .menuBar,
-            glossary: [], diarizationEnabled: false
+            glossary: [], diarizationEnabled: false,
+            spokenCorrectionsEnabled: true, condensedOutputEnabled: false
         )
         profiles.append(profile)
         selectedProfileID = profile.id

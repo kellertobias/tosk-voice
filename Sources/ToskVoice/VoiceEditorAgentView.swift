@@ -33,6 +33,14 @@ final class VoiceEditorAgentWindowController {
         controller.instruction = instruction
         show()
     }
+
+    func installObsidianCompanion() {
+        controller.installObsidianCompanion()
+    }
+
+    func copyZedConfiguration() {
+        controller.copyZedConfiguration()
+    }
 }
 
 private struct VoiceEditorAgentView: View {

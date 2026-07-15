@@ -27,10 +27,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let modelPacks = ModelPackController()
         let agentPreferences = AgentPreferencesStore()
         model = AppModel(preferences: preferences, history: history, modelPacks: modelPacks)
-        let settings = SettingsWindowController(model: model)
         let historyWindow = HistoryWindowController(model: model)
         let textToSpeech = TextToSpeechWindowController(modelPacks: modelPacks, preferences: preferences)
-        voiceEditor = VoiceEditorAgentWindowController(preferences: agentPreferences)
+        let voiceEditorWindow = VoiceEditorAgentWindowController(preferences: agentPreferences)
+        voiceEditor = voiceEditorWindow
+        let settings = SettingsWindowController(
+            model: model,
+            showTextToSpeech: { textToSpeech.show() },
+            showVoiceEditor: { voiceEditorWindow.show() },
+            installObsidianCompanion: { voiceEditorWindow.installObsidianCompanion() },
+            copyZedConfiguration: { voiceEditorWindow.copyZedConfiguration() }
+        )
+        if let selectedTab = SettingsRelaunchState.consumeSelectedTab() {
+            settings.show(tab: selectedTab)
+        }
         menuController = MenuController(model: model, settings: settings, history: historyWindow, textToSpeech: textToSpeech, voiceEditor: voiceEditor)
         overlayController = OverlayController(model: model, statusButton: menuController.statusItem.button)
 

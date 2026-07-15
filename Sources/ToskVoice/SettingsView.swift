@@ -3,22 +3,78 @@ import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum SettingsTab: String {
+    case general = "General"
+    case profiles = "Profiles"
+    case models = "Models"
+    case privacy = "Privacy"
+    case extensions = "Extensions"
+}
+
+@MainActor
+final class SettingsNavigation: ObservableObject {
+    @Published var selectedTab: SettingsTab = .profiles
+}
+
+enum SettingsRelaunchState {
+    private static let tabKey = "settings.reopenAfterRestart.tab"
+
+    @MainActor
+    static func prepare(selectedTab: SettingsTab, defaults: UserDefaults = .standard) {
+        defaults.set(selectedTab.rawValue, forKey: tabKey)
+    }
+
+    @MainActor
+    static func consumeSelectedTab(defaults: UserDefaults = .standard) -> SettingsTab? {
+        defer { defaults.removeObject(forKey: tabKey) }
+        guard let rawValue = defaults.string(forKey: tabKey) else { return nil }
+        return SettingsTab(rawValue: rawValue)
+    }
+}
+
 @MainActor
 final class SettingsWindowController {
     private var window: NSWindow?
+    private let navigation = SettingsNavigation()
     private let model: AppModel
+    private let showTextToSpeech: @MainActor () -> Void
+    private let showVoiceEditor: @MainActor () -> Void
+    private let installObsidianCompanion: @MainActor () -> Void
+    private let copyZedConfiguration: @MainActor () -> Void
 
-    init(model: AppModel) { self.model = model }
+    init(
+        model: AppModel,
+        showTextToSpeech: @escaping @MainActor () -> Void,
+        showVoiceEditor: @escaping @MainActor () -> Void,
+        installObsidianCompanion: @escaping @MainActor () -> Void,
+        copyZedConfiguration: @escaping @MainActor () -> Void
+    ) {
+        self.model = model
+        self.showTextToSpeech = showTextToSpeech
+        self.showVoiceEditor = showVoiceEditor
+        self.installObsidianCompanion = installObsidianCompanion
+        self.copyZedConfiguration = copyZedConfiguration
+    }
 
-    func show() {
+    func show(tab: SettingsTab? = nil) {
+        if let tab {
+            navigation.selectedTab = tab
+        }
         if let window {
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
             return
         }
-        let view = SettingsView(model: model)
+        let view = SettingsView(
+            model: model,
+            navigation: navigation,
+            showTextToSpeech: showTextToSpeech,
+            showVoiceEditor: showVoiceEditor,
+            installObsidianCompanion: installObsidianCompanion,
+            copyZedConfiguration: copyZedConfiguration
+        )
         let controller = NSHostingController(rootView: view)
-        let window = NSWindow(contentViewController: controller)
+        let window = SettingsWindow(contentViewController: controller)
         window.title = "ToskVoice Settings"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 720, height: 540))
@@ -30,29 +86,68 @@ final class SettingsWindowController {
     }
 }
 
+private final class SettingsWindow: NSWindow {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
+              let key = event.charactersIgnoringModifiers?.lowercased(),
+              key == "q" || key == "w"
+        else {
+            return super.performKeyEquivalent(with: event)
+        }
+
+        close()
+        return true
+    }
+}
+
 private struct SettingsView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var navigation: SettingsNavigation
     @ObservedObject private var preferences: PreferencesStore
+    @ObservedObject private var modelPacks: ModelPackController
     @StateObject private var permissions = PermissionCenter()
-    @State private var selectedTab = "Profiles"
+    private let showTextToSpeech: @MainActor () -> Void
+    private let showVoiceEditor: @MainActor () -> Void
+    private let installObsidianCompanion: @MainActor () -> Void
+    private let copyZedConfiguration: @MainActor () -> Void
 
-    init(model: AppModel) {
+    init(
+        model: AppModel,
+        navigation: SettingsNavigation,
+        showTextToSpeech: @escaping @MainActor () -> Void,
+        showVoiceEditor: @escaping @MainActor () -> Void,
+        installObsidianCompanion: @escaping @MainActor () -> Void,
+        copyZedConfiguration: @escaping @MainActor () -> Void
+    ) {
         self.model = model
-        preferences = model.preferences
+        self.navigation = navigation
+        self.showTextToSpeech = showTextToSpeech
+        self.showVoiceEditor = showVoiceEditor
+        self.installObsidianCompanion = installObsidianCompanion
+        self.copyZedConfiguration = copyZedConfiguration
+        _preferences = ObservedObject(wrappedValue: model.preferences)
+        _modelPacks = ObservedObject(wrappedValue: model.modelPacks)
     }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            general.tag("General").tabItem { Label("General", systemImage: "gearshape") }
-            profiles.tag("Profiles").tabItem { Label("Profiles", systemImage: "square.stack.3d.up") }
-            models.tag("Models").tabItem { Label("Models", systemImage: "waveform.badge.magnifyingglass") }
-            privacy.tag("Privacy").tabItem { Label("Privacy", systemImage: "hand.raised") }
-            extensions.tag("Extensions").tabItem { Label("Extensions", systemImage: "sparkles") }
+        TabView(selection: $navigation.selectedTab) {
+            general.tag(SettingsTab.general).tabItem { Label("General", systemImage: "gearshape") }
+            profiles.tag(SettingsTab.profiles).tabItem { Label("Profiles", systemImage: "square.stack.3d.up") }
+            models.tag(SettingsTab.models).tabItem { Label("Models", systemImage: "waveform.badge.magnifyingglass") }
+            privacy.tag(SettingsTab.privacy).tabItem { Label("Privacy", systemImage: "hand.raised") }
+            extensions.tag(SettingsTab.extensions).tabItem { Label("Extensions", systemImage: "sparkles") }
         }
         .padding(20)
         .frame(minWidth: 680, minHeight: 500)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             permissions.refresh()
+        }
+        .task {
+            while !Task.isCancelled {
+                permissions.refresh()
+                try? await Task.sleep(for: .seconds(1))
+            }
         }
     }
 
@@ -117,20 +212,41 @@ private struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Automatic English + German") {
-                LabeledContent("WhisperKit Large-v3 Turbo", value: model.modelPacks.whisperState.label)
-                Button("Install or Load Model Pack…") {
-                    Task { _ = try? await model.modelPacks.prepareWhisper() }
+                ModelPackRow(
+                    title: "WhisperKit Large-v3 Turbo",
+                    state: modelPacks.whisperState,
+                    buttonTitle: "Install or Load Model Pack..."
+                ) {
+                    Task {
+                        do { _ = try await modelPacks.prepareWhisper() } catch { }
+                    }
                 }
-                .disabled(model.modelPacks.whisperState == .downloading || model.modelPacks.whisperState == .loading)
                 Text("Downloaded directly from the Argmax model repository and cached locally.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Speaker labels") {
-                LabeledContent("SpeakerKit", value: model.modelPacks.speakerState.label)
-                Button("Install or Load Speaker Pack…") {
-                    Task { _ = try? await model.modelPacks.prepareSpeakerKit() }
+                ModelPackRow(
+                    title: "SpeakerKit",
+                    state: modelPacks.speakerState,
+                    buttonTitle: "Install or Load Speaker Pack..."
+                ) {
+                    Task {
+                        do { _ = try await modelPacks.prepareSpeakerKit() } catch { }
+                    }
                 }
-                .disabled(model.modelPacks.speakerState == .downloading || model.modelPacks.speakerState == .loading)
+            }
+            Section("Text to Speech") {
+                ModelPackRow(
+                    title: "Qwen3 neural voice",
+                    state: modelPacks.neuralVoiceState,
+                    buttonTitle: "Install or Load Neural Voice..."
+                ) {
+                    Task {
+                        do { _ = try await modelPacks.prepareNeuralVoice() } catch { }
+                    }
+                }
+                Text("macOS voices are managed by the system. The optional neural voice downloads from the Argmax model repository.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -152,22 +268,25 @@ private struct SettingsView: View {
                     pane: "Privacy_Microphone"
                 )
                 permissionRow(
-                    title: "Input Monitoring",
-                    explanation: "Listens for dictation shortcuts while another app is active.",
-                    granted: permissions.inputMonitoringGranted,
-                    request: permissions.requestInputMonitoring,
-                    pane: "Privacy_ListenEvent"
-                )
-                permissionRow(
                     title: "Accessibility",
-                    explanation: "Inserts the finished transcript into the focused text field.",
+                    explanation: "Inserts the listening marker and finished transcript into the focused field.",
                     granted: permissions.accessibilityGranted,
                     request: permissions.requestAccessibility,
                     pane: "Privacy_Accessibility"
                 )
-                Text("After granting Input Monitoring or Accessibility, quit and reopen ToskVoice so macOS applies the change.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(alignment: .center, spacing: 12) {
+                    Text("After granting Accessibility, restart ToskVoice so macOS applies the change.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        SettingsRelaunchState.prepare(selectedTab: navigation.selectedTab)
+                        permissions.restartApplication()
+                    } label: {
+                        Label("Restart ToskVoice", systemImage: "arrow.clockwise")
+                    }
+                    .controlSize(.small)
+                }
             }
         }
         .formStyle(.grouped)
@@ -176,13 +295,33 @@ private struct SettingsView: View {
     private var extensions: some View {
         Form {
             Section("Text to Speech") {
-                Label("macOS and optional Qwen3 voices", systemImage: "checkmark.circle")
-                Label("Selectable output and WAV/MP3 export", systemImage: "checkmark.circle")
+                ExtensionActionRow(title: "macOS and optional Qwen3 voices", systemImage: "checkmark.circle") {
+                    Button("Open Text to Speech", action: showTextToSpeech)
+                    Button("Download Qwen3 Voice") {
+                        navigation.selectedTab = .models
+                        Task {
+                            do { _ = try await modelPacks.prepareNeuralVoice() } catch { }
+                        }
+                    }
+                }
+                ExtensionActionRow(title: "Selectable output and WAV/MP3 export", systemImage: "checkmark.circle") {
+                    Button("Output Settings") {
+                        navigation.selectedTab = .general
+                    }
+                    Button("Export Audio", action: showTextToSpeech)
+                }
             }
             Section("Voice Editor Agent") {
-                Label("Apple and OpenAI-compatible providers", systemImage: "checkmark.circle")
-                Label("Approved roots, native diff review, atomic undo", systemImage: "checkmark.circle")
-                Label("Bundled Zed ACP and Obsidian companion", systemImage: "checkmark.circle")
+                ExtensionActionRow(title: "Apple and OpenAI-compatible providers", systemImage: "checkmark.circle") {
+                    Button("Provider Settings", action: showVoiceEditor)
+                }
+                ExtensionActionRow(title: "Approved roots, native diff review, atomic undo", systemImage: "checkmark.circle") {
+                    Button("Workspace Settings", action: showVoiceEditor)
+                }
+                ExtensionActionRow(title: "Bundled Zed ACP and Obsidian companion", systemImage: "checkmark.circle") {
+                    Button("Copy Zed Config", action: copyZedConfiguration)
+                    Button("Install Obsidian", action: installObsidianCompanion)
+                }
             }
         }
         .formStyle(.grouped)
@@ -206,6 +345,63 @@ private struct SettingsView: View {
                 Button("Open Settings") { permissions.openPrivacySettings(pane) }
             }
             Text(explanation).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct ExtensionActionRow<Actions: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Label(title, systemImage: systemImage)
+            Spacer()
+            HStack(spacing: 8, content: actions)
+                .controlSize(.small)
+        }
+    }
+}
+
+private struct ModelPackRow: View {
+    let title: String
+    let state: ModelPackController.PackState
+    let buttonTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                LabeledContent(title, value: state.label)
+                if state.isReady {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else if state.isFailed {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                }
+            }
+            HStack(spacing: 10) {
+                Button(buttonTitle, action: action)
+                    .disabled(state.isActive)
+                if state.isActive {
+                    if let progress = state.progressValue {
+                        ProgressView(value: progress)
+                            .progressViewStyle(.linear)
+                            .frame(width: 170)
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+            }
+            if let errorMessage = state.errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
         }
     }
 }
@@ -234,6 +430,22 @@ private struct ProfileEditor: View {
                 ForEach(OverlayPlacement.allCases) { Text($0.label).tag($0) }
             }
             Toggle("Multi-speaker labels", isOn: profile.diarizationEnabled)
+            Section("Transcript processing") {
+                Toggle("Spoken corrections", isOn: Binding(
+                    get: { profile.wrappedValue.usesSpokenCorrections },
+                    set: { profile.wrappedValue.spokenCorrectionsEnabled = $0 }
+                ))
+                Text("Apply phrases such as “oh no,” “strike that,” and “let me rephrase” to the staged text immediately using a warm on-device model.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("Polish final text", isOn: Binding(
+                    get: { profile.wrappedValue.producesCondensedOutput },
+                    set: { profile.wrappedValue.condensedOutputEnabled = $0 }
+                ))
+                Text("On Stop, Apple’s on-device language model merges corrections and returns a concise final version. The original is kept if processing fails.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 Text("Vocabulary").font(.headline)
                 TextEditor(text: Binding(
