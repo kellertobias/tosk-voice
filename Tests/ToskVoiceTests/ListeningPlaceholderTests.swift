@@ -24,4 +24,18 @@ final class ListeningPlaceholderTests: XCTestCase {
             range: CFRange(location: 10, length: 11)
         ))
     }
+
+    func testReplacesUTF16TextRangeWithoutDamagingSurroundingText() {
+        let prefix = "Before 🙂 "
+        let value = prefix + ListeningPlaceholder.text + " after"
+        let range = CFRange(
+            location: (prefix as NSString).length,
+            length: (ListeningPlaceholder.text as NSString).length
+        )
+
+        XCTAssertEqual(
+            TextRangeReplacement.replacing(range: range, in: value, with: "dictated text"),
+            "Before 🙂 dictated text after"
+        )
+    }
 }

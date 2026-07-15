@@ -52,28 +52,45 @@ final class ExternalApplicationTracker: NSObject {
 }
 
 final class CapturedTextTarget: @unchecked Sendable {
-    private let processID: pid_t
     private let element: AXUIElement?
     private var listeningPlaceholderRange: CFRange?
 
-    private init(processID: pid_t, element: AXUIElement?) {
-        self.processID = processID
+    private init(element: AXUIElement?) {
         self.element = element
     }
 
     @MainActor
     static func capture() -> CapturedTextTarget? {
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedValue: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            systemWide,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedValue
+        ) == .success,
+        let focusedElement = focusedValue as! AXUIElement? {
+            var focusedProcessID = pid_t()
+            if AXUIElementGetPid(focusedElement, &focusedProcessID) == .success,
+               focusedProcessID != ProcessInfo.processInfo.processIdentifier {
+                return CapturedTextTarget(element: focusedElement)
+            }
+        }
+
         guard let processID = ExternalApplicationTracker.shared.targetProcessID() else { return nil }
         let application = AXUIElementCreateApplication(processID)
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute as CFString, &value)
-        return CapturedTextTarget(processID: processID, element: result == .success ? (value as! AXUIElement?) : nil)
+        return CapturedTextTarget(element: result == .success ? (value as! AXUIElement?) : nil)
     }
 
     func insert(_ text: String) -> Bool {
         if let element {
             let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString)
             if result == .success { return true }
+            if let selectedRange = selectedTextRange(of: element),
+               replaceTextValue(in: element, range: selectedRange, with: text) {
+                return true
+            }
         }
         return paste(text)
     }
@@ -87,12 +104,19 @@ final class CapturedTextTarget: @unchecked Sendable {
               let element,
               let selectedRange = selectedTextRange(of: element) else { return false }
 
-        let result = AXUIElementSetAttributeValue(
+        var inserted = AXUIElementSetAttributeValue(
             element,
             kAXSelectedTextAttribute as CFString,
             ListeningPlaceholder.text as CFString
+        ) == .success || replaceTextValue(
+            in: element,
+            range: selectedRange,
+            with: ListeningPlaceholder.text
         )
-        guard result == .success else { return false }
+        if !inserted, selectTextRange(selectedRange, in: element) {
+            inserted = paste(ListeningPlaceholder.text)
+        }
+        guard inserted else { return false }
         listeningPlaceholderRange = CFRange(
             location: selectedRange.location,
             length: (ListeningPlaceholder.text as NSString).length
@@ -101,14 +125,14 @@ final class CapturedTextTarget: @unchecked Sendable {
     }
 
     func replaceListeningPlaceholder(with text: String) -> Bool {
-        replaceListeningPlaceholderValue(with: text)
+        replaceListeningPlaceholderValue(with: text, allowPaste: true)
     }
 
     func removeListeningPlaceholder() {
-        _ = replaceListeningPlaceholderValue(with: "")
+        _ = replaceListeningPlaceholderValue(with: "", allowPaste: false)
     }
 
-    private func replaceListeningPlaceholderValue(with replacement: String) -> Bool {
+    private func replaceListeningPlaceholderValue(with replacement: String, allowPaste: Bool) -> Bool {
         guard let element, let range = listeningPlaceholderRange else { return false }
         defer { listeningPlaceholderRange = nil }
 
@@ -117,17 +141,32 @@ final class CapturedTextTarget: @unchecked Sendable {
             return false
         }
 
-        var mutableRange = range
-        guard let rangeValue = AXValueCreate(.cfRange, &mutableRange),
-              AXUIElementSetAttributeValue(
+        let selectedRangeSucceeded = selectTextRange(range, in: element)
+        if selectedRangeSucceeded,
+           AXUIElementSetAttributeValue(
                 element,
-                kAXSelectedTextRangeAttribute as CFString,
-                rangeValue
-              ) == .success else { return false }
+                kAXSelectedTextAttribute as CFString,
+                replacement as CFString
+           ) == .success {
+            return true
+        }
+        if replaceTextValue(
+            in: element,
+            range: range,
+            with: replacement
+        ) {
+            return true
+        }
+        return allowPaste && selectedRangeSucceeded && paste(replacement)
+    }
+
+    private func selectTextRange(_ range: CFRange, in element: AXUIElement) -> Bool {
+        var mutableRange = range
+        guard let rangeValue = AXValueCreate(.cfRange, &mutableRange) else { return false }
         return AXUIElementSetAttributeValue(
             element,
-            kAXSelectedTextAttribute as CFString,
-            replacement as CFString
+            kAXSelectedTextRangeAttribute as CFString,
+            rangeValue
         ) == .success
     }
 
@@ -157,16 +196,41 @@ final class CapturedTextTarget: @unchecked Sendable {
         return value as? String
     }
 
+    private func replaceTextValue(
+        in element: AXUIElement,
+        range: CFRange,
+        with replacement: String
+    ) -> Bool {
+        guard let currentValue = textValue(of: element),
+              let updatedValue = TextRangeReplacement.replacing(
+                range: range,
+                in: currentValue,
+                with: replacement
+              ),
+              AXUIElementSetAttributeValue(
+                element,
+                kAXValueAttribute as CFString,
+                updatedValue as CFString
+              ) == .success else { return false }
+
+        var caretRange = CFRange(
+            location: range.location + (replacement as NSString).length,
+            length: 0
+        )
+        if let caretValue = AXValueCreate(.cfRange, &caretRange) {
+            _ = AXUIElementSetAttributeValue(
+                element,
+                kAXSelectedTextRangeAttribute as CFString,
+                caretValue
+            )
+        }
+        return true
+    }
+
     private func paste(_ text: String) -> Bool {
-        // Posting Command-V is controlled by Accessibility. Without this
-        // preflight, CGEvent silently drops the keystrokes and we would report
-        // a successful insertion even though nothing reached the target app.
-        guard CGPreflightPostEventAccess() else { return false }
+        guard AXIsProcessTrusted() else { return false }
 
         let pasteboard = NSPasteboard.general
-        let previous = pasteboard.pasteboardItems?.map { item -> [NSPasteboard.PasteboardType: Data] in
-            Dictionary(uniqueKeysWithValues: item.types.compactMap { type in item.data(forType: type).map { (type, $0) } })
-        }
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
@@ -175,20 +239,8 @@ final class CapturedTextTarget: @unchecked Sendable {
               let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return false }
         down.flags = .maskCommand
         up.flags = .maskCommand
-        down.postToPid(processID)
-        up.postToPid(processID)
-
-        if let previous {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                pasteboard.clearContents()
-                let items = previous.map { values -> NSPasteboardItem in
-                    let item = NSPasteboardItem()
-                    for (type, data) in values { item.setData(data, forType: type) }
-                    return item
-                }
-                pasteboard.writeObjects(items)
-            }
-        }
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
         return true
     }
 }
@@ -204,6 +256,20 @@ enum ListeningPlaceholder {
         return string.substring(
             with: NSRange(location: range.location, length: range.length)
         ) == text
+    }
+}
+
+enum TextRangeReplacement {
+    static func replacing(range: CFRange, in value: String, with replacement: String) -> String? {
+        guard range.location >= 0, range.length >= 0 else { return nil }
+        let result = NSMutableString(string: value)
+        guard range.location <= result.length,
+              range.length <= result.length - range.location else { return nil }
+        result.replaceCharacters(
+            in: NSRange(location: range.location, length: range.length),
+            with: replacement
+        )
+        return result as String
     }
 }
 
