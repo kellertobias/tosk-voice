@@ -6,7 +6,7 @@ cd "$ROOT"
 
 APP_NAME="ToskVoice"
 BUNDLE_IDENTIFIER="de.tobisk.toskvoice"
-SIGNING_IDENTITY="${TOSKVOICE_SIGNING_IDENTITY:--}"
+SIGNING_IDENTITY="${TOSKVOICE_SIGNING_IDENTITY:-}"
 VERSION="${TOSKVOICE_VERSION:-0.1.0}"
 CONFIGURATION="debug"
 ACTION="${1:-build}"
@@ -24,6 +24,22 @@ fi
 export CLANG_MODULE_CACHE_PATH="$ROOT/.build/module-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$ROOT/.build/module-cache"
 mkdir -p "$CLANG_MODULE_CACHE_PATH"
+
+resolve_signing_identity() {
+  if [[ -n "$SIGNING_IDENTITY" ]]; then
+    return
+  fi
+
+  SIGNING_IDENTITY="$(
+    security find-identity -v -p codesigning 2>/dev/null |
+      awk -F'"' '/Apple Development:|Developer ID Application:/ { print $2; exit }'
+  )"
+  if [[ -z "$SIGNING_IDENTITY" ]]; then
+    SIGNING_IDENTITY="-"
+    echo "Warning: no stable code-signing identity was found; macOS permissions may reset after a rebuild."
+    echo "Install an Apple Development certificate or set TOSKVOICE_SIGNING_IDENTITY to preserve permissions."
+  fi
+}
 
 ensure_toolchain() {
   if ! command -v xcrun >/dev/null 2>&1 || ! command -v swift >/dev/null 2>&1; then
@@ -99,6 +115,7 @@ install_app() {
 }
 
 ensure_toolchain
+resolve_signing_identity
 
 case "$ACTION" in
   build)
