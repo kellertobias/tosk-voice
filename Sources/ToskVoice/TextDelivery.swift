@@ -51,15 +51,17 @@ final class ExternalApplicationTracker: NSObject {
     }
 }
 
-final class CapturedTextTarget: @unchecked Sendable {
+@MainActor
+final class CapturedTextTarget {
+    private let processID: pid_t?
     private let element: AXUIElement?
     private var listeningPlaceholderRange: CFRange?
 
-    private init(element: AXUIElement?) {
+    private init(processID: pid_t?, element: AXUIElement?) {
+        self.processID = processID
         self.element = element
     }
 
-    @MainActor
     static func capture() -> CapturedTextTarget? {
         let systemWide = AXUIElementCreateSystemWide()
         var focusedValue: CFTypeRef?
@@ -72,34 +74,60 @@ final class CapturedTextTarget: @unchecked Sendable {
             var focusedProcessID = pid_t()
             if AXUIElementGetPid(focusedElement, &focusedProcessID) == .success,
                focusedProcessID != ProcessInfo.processInfo.processIdentifier {
-                return CapturedTextTarget(element: focusedElement)
+                enableAccessibilityTree(for: focusedProcessID)
+                return CapturedTextTarget(processID: focusedProcessID, element: focusedElement)
             }
         }
 
         guard let processID = ExternalApplicationTracker.shared.targetProcessID() else { return nil }
-        let application = AXUIElementCreateApplication(processID)
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute as CFString, &value)
-        return CapturedTextTarget(element: result == .success ? (value as! AXUIElement?) : nil)
+        enableAccessibilityTree(for: processID)
+        return CapturedTextTarget(processID: processID, element: focusedElement(of: processID))
     }
 
-    func insert(_ text: String) -> Bool {
-        if let element {
-            let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString)
-            if result == .success { return true }
-            if let selectedRange = selectedTextRange(of: element),
-               replaceTextValue(in: element, range: selectedRange, with: text) {
-                return true
-            }
+    /// Chromium-based apps (Electron: Obsidian, Teams, Claude Code, …) keep their
+    /// accessibility tree disabled until a client opts in, so without this their
+    /// focused text fields are invisible to the AX insertion paths.
+    private static func enableAccessibilityTree(for processID: pid_t) {
+        let application = AXUIElementCreateApplication(processID)
+        AXUIElementSetAttributeValue(application, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    }
+
+    private static func focusedElement(of processID: pid_t) -> AXUIElement? {
+        let application = AXUIElementCreateApplication(processID)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            application,
+            kAXFocusedUIElementAttribute as CFString,
+            &value
+        ) == .success else { return nil }
+        return value as! AXUIElement?
+    }
+
+    func insert(_ text: String) async -> Bool {
+        if let element, insertUsingAccessibility(text, into: element) { return true }
+        if let processID,
+           let refreshed = Self.focusedElement(of: processID),
+           insertUsingAccessibility(text, into: refreshed) {
+            return true
         }
-        return paste(text)
+        return await paste(text)
+    }
+
+    private func insertUsingAccessibility(_ text: String, into element: AXUIElement) -> Bool {
+        if AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString) == .success {
+            return true
+        }
+        if let selectedRange = selectedTextRange(of: element) {
+            return replaceTextValue(in: element, range: selectedRange, with: text)
+        }
+        return false
     }
 
     var hasListeningPlaceholder: Bool {
         listeningPlaceholderRange != nil
     }
 
-    func beginListeningPlaceholder() -> Bool {
+    func beginListeningPlaceholder() async -> Bool {
         guard AXIsProcessTrusted(),
               let element,
               let selectedRange = selectedTextRange(of: element) else { return false }
@@ -114,7 +142,7 @@ final class CapturedTextTarget: @unchecked Sendable {
             with: ListeningPlaceholder.text
         )
         if !inserted, selectTextRange(selectedRange, in: element) {
-            inserted = paste(ListeningPlaceholder.text)
+            inserted = await paste(ListeningPlaceholder.text)
         }
         guard inserted else { return false }
         listeningPlaceholderRange = CFRange(
@@ -124,15 +152,15 @@ final class CapturedTextTarget: @unchecked Sendable {
         return true
     }
 
-    func replaceListeningPlaceholder(with text: String) -> Bool {
-        replaceListeningPlaceholderValue(with: text, allowPaste: true)
+    func replaceListeningPlaceholder(with text: String) async -> Bool {
+        await replaceListeningPlaceholderValue(with: text, allowPaste: true)
     }
 
-    func removeListeningPlaceholder() {
-        _ = replaceListeningPlaceholderValue(with: "", allowPaste: false)
+    func removeListeningPlaceholder() async {
+        _ = await replaceListeningPlaceholderValue(with: "", allowPaste: false)
     }
 
-    private func replaceListeningPlaceholderValue(with replacement: String, allowPaste: Bool) -> Bool {
+    private func replaceListeningPlaceholderValue(with replacement: String, allowPaste: Bool) async -> Bool {
         guard let element, let range = listeningPlaceholderRange else { return false }
         defer { listeningPlaceholderRange = nil }
 
@@ -157,7 +185,10 @@ final class CapturedTextTarget: @unchecked Sendable {
         ) {
             return true
         }
-        return allowPaste && selectedRangeSucceeded && paste(replacement)
+        if allowPaste, selectedRangeSucceeded {
+            return await paste(replacement)
+        }
+        return false
     }
 
     private func selectTextRange(_ range: CFRange, in element: AXUIElement) -> Bool {
@@ -227,12 +258,24 @@ final class CapturedTextTarget: @unchecked Sendable {
         return true
     }
 
-    private func paste(_ text: String) -> Bool {
+    private func paste(_ text: String) async -> Bool {
         guard AXIsProcessTrusted() else { return false }
 
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+
+        // Cmd+V must reach the captured app, not ToskVoice (e.g. after the
+        // overlay's stop button was clicked).
+        if let processID,
+           NSWorkspace.shared.frontmostApplication?.processIdentifier != processID,
+           let application = NSRunningApplication(processIdentifier: processID) {
+            application.activate()
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        // The stop shortcut's modifiers are usually still held; combined with
+        // the synthetic Cmd they would turn the paste into a different shortcut.
+        await waitForModifierRelease()
 
         guard let source = CGEventSource(stateID: .combinedSessionState),
               let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
@@ -242,6 +285,16 @@ final class CapturedTextTarget: @unchecked Sendable {
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
         return true
+    }
+
+    private func waitForModifierRelease() async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        let modifiers: CGEventFlags = [.maskCommand, .maskShift, .maskControl, .maskAlternate, .maskSecondaryFn]
+        while clock.now < deadline {
+            if CGEventSource.flagsState(.combinedSessionState).intersection(modifiers).isEmpty { return }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
     }
 }
 

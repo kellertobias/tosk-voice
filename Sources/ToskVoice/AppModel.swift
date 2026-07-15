@@ -76,7 +76,7 @@ final class AppModel: ObservableObject {
         pendingProcessingTask = nil
         pendingCorrection = nil
         capturedTarget = profile.destination == .focusedField ? CapturedTextTarget.capture() : nil
-        _ = capturedTarget?.beginListeningPlaceholder()
+        _ = await capturedTarget?.beginListeningPlaceholder()
         statusDetail = profile.destination == .focusedField && !AXIsProcessTrusted()
             ? "No Accessibility permission — result will only be copied"
             : profile.name
@@ -119,7 +119,7 @@ final class AppModel: ObservableObject {
             state = .listening
             onMenuNeedsUpdate?()
         } catch {
-            capturedTarget?.removeListeningPlaceholder()
+            await capturedTarget?.removeListeningPlaceholder()
             capturedTarget = nil
             fail(error.localizedDescription)
             await speechSession.cancel()
@@ -164,7 +164,7 @@ final class AppModel: ObservableObject {
         pendingProcessingTask = nil
         pendingCorrection = nil
         correctionSpeaker.stopSpeaking(at: .immediate)
-        capturedTarget?.removeListeningPlaceholder()
+        await capturedTarget?.removeListeningPlaceholder()
         capturedTarget = nil
         finalizedText = ""
         volatileText = ""
@@ -319,7 +319,7 @@ final class AppModel: ObservableObject {
     private func commit() async {
         var text = ledger.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
-            capturedTarget?.removeListeningPlaceholder()
+            await capturedTarget?.removeListeningPlaceholder()
             capturedTarget = nil
             state = .idle
             statusDetail = "Nothing recorded"
@@ -345,15 +345,18 @@ final class AppModel: ObservableObject {
         switch profile.destination {
         case .focusedField:
             if let capturedTarget {
-                succeeded = capturedTarget.hasListeningPlaceholder
-                    && capturedTarget.replaceListeningPlaceholder(with: text)
-                    || capturedTarget.insert(text)
+                if capturedTarget.hasListeningPlaceholder {
+                    succeeded = await capturedTarget.replaceListeningPlaceholder(with: text)
+                }
+                if !succeeded {
+                    succeeded = await capturedTarget.insert(text)
+                }
             }
             if !succeeded {
                 destinationDescription = "Clipboard fallback"
             }
         case .markdown:
-            capturedTarget?.removeListeningPlaceholder()
+            await capturedTarget?.removeListeningPlaceholder()
             if let bookmark = profile.markdownBookmark {
                 do {
                     let path = try TextDelivery.appendMarkdown(text, bookmark: bookmark)
