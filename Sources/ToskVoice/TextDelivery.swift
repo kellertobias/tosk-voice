@@ -53,11 +53,11 @@ final class ExternalApplicationTracker: NSObject {
 
 @MainActor
 final class CapturedTextTarget {
-    private let processID: pid_t?
+    private let processID: pid_t
     private let element: AXUIElement?
     private var listeningPlaceholderRange: CFRange?
 
-    private init(processID: pid_t?, element: AXUIElement?) {
+    private init(processID: pid_t, element: AXUIElement?) {
         self.processID = processID
         self.element = element
     }
@@ -105,12 +105,9 @@ final class CapturedTextTarget {
 
     func insert(_ text: String) async -> Bool {
         if let element, insertUsingAccessibility(text, into: element) { return true }
-        if let processID,
-           let refreshed = Self.focusedElement(of: processID),
-           insertUsingAccessibility(text, into: refreshed) {
-            return true
-        }
-        return await paste(text)
+        let refreshed = Self.focusedElement(of: processID)
+        if let refreshed, insertUsingAccessibility(text, into: refreshed) { return true }
+        return await paste(text, into: element ?? refreshed)
     }
 
     private func insertUsingAccessibility(_ text: String, into element: AXUIElement) -> Bool {
@@ -142,7 +139,7 @@ final class CapturedTextTarget {
             with: ListeningPlaceholder.text
         )
         if !inserted, selectTextRange(selectedRange, in: element) {
-            inserted = await paste(ListeningPlaceholder.text)
+            inserted = await paste(ListeningPlaceholder.text, into: element)
         }
         guard inserted else { return false }
         listeningPlaceholderRange = CFRange(
@@ -186,7 +183,7 @@ final class CapturedTextTarget {
             return true
         }
         if allowPaste, selectedRangeSucceeded {
-            return await paste(replacement)
+            return await paste(replacement, into: element)
         }
         return false
     }
@@ -258,20 +255,26 @@ final class CapturedTextTarget {
         return true
     }
 
-    private func paste(_ text: String) async -> Bool {
+    /// A synthetic Cmd+V always lands in the frontmost app's focused field, so the
+    /// captured app is brought back to front and the captured field re-focused
+    /// before posting, and the user is returned to their current app afterwards.
+    /// If the captured app cannot be made frontmost the paste is aborted rather
+    /// than typed into whatever the user is doing right now.
+    private func paste(_ text: String, into field: AXUIElement?) async -> Bool {
         guard AXIsProcessTrusted() else { return false }
 
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        // Cmd+V must reach the captured app, not ToskVoice (e.g. after the
-        // overlay's stop button was clicked).
-        if let processID,
-           NSWorkspace.shared.frontmostApplication?.processIdentifier != processID,
-           let application = NSRunningApplication(processIdentifier: processID) {
-            application.activate()
-            try? await Task.sleep(for: .milliseconds(150))
+        let previousApplication = NSWorkspace.shared.frontmostApplication
+        let needsActivation = previousApplication?.processIdentifier != processID
+        if needsActivation {
+            guard await activateTargetApplication() else { return false }
+        }
+        if let field {
+            AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            try? await Task.sleep(for: .milliseconds(50))
         }
         // The stop shortcut's modifiers are usually still held; combined with
         // the synthetic Cmd they would turn the paste into a different shortcut.
@@ -284,7 +287,26 @@ final class CapturedTextTarget {
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
+
+        if needsActivation,
+           let previousApplication,
+           previousApplication.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            try? await Task.sleep(for: .milliseconds(250))
+            previousApplication.activate()
+        }
         return true
+    }
+
+    private func activateTargetApplication() async -> Bool {
+        guard let application = NSRunningApplication(processIdentifier: processID) else { return false }
+        application.activate()
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(1))
+        while clock.now < deadline {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == processID { return true }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return false
     }
 
     private func waitForModifierRelease() async {
