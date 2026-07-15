@@ -345,6 +345,7 @@ final class AppModel: ObservableObject {
         switch profile.destination {
         case .focusedField:
             if let capturedTarget {
+                await capturedTarget.focusCapturedField()
                 if capturedTarget.hasListeningPlaceholder {
                     succeeded = await capturedTarget.replaceListeningPlaceholder(with: text)
                 }

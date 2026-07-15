@@ -106,6 +106,21 @@ final class CapturedTextTarget {
         return value as! AXUIElement?
     }
 
+    /// Brings the captured app frontmost, raises the captured field's window and
+    /// re-focuses the field, so the user sees exactly where the text will land.
+    func focusCapturedField() async {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != processID {
+            _ = await activateTargetApplication()
+        }
+        guard let element else { return }
+        var window: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &window) == .success,
+           let window = window as! AXUIElement? {
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        }
+        AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    }
+
     /// Pasting is the primary delivery path: accessibility writes report success
     /// in apps that silently ignore them (terminals, some web editors), whereas a
     /// well-formed synthetic Cmd+V behaves exactly like the user pressing it.
@@ -272,8 +287,7 @@ final class CapturedTextTarget {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        let previousApplication = NSWorkspace.shared.frontmostApplication
-        let needsActivation = previousApplication?.processIdentifier != processID
+        let needsActivation = NSWorkspace.shared.frontmostApplication?.processIdentifier != processID
         if needsActivation {
             guard await activateTargetApplication() else {
                 deliveryLog.log("paste skipped: could not bring pid \(self.processID) frontmost")
@@ -316,13 +330,6 @@ final class CapturedTextTarget {
             try? await Task.sleep(for: .milliseconds(10))
         }
         deliveryLog.log("posted Cmd+V into pid \(self.processID)")
-
-        if needsActivation,
-           let previousApplication,
-           previousApplication.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-            try? await Task.sleep(for: .milliseconds(250))
-            previousApplication.activate()
-        }
         return true
     }
 
