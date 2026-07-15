@@ -76,7 +76,7 @@ final class AppModel: ObservableObject {
         pendingProcessingTask = nil
         pendingCorrection = nil
         capturedTarget = profile.destination == .focusedField ? CapturedTextTarget.capture() : nil
-        _ = await capturedTarget?.beginListeningPlaceholder()
+        _ = capturedTarget?.beginListeningPlaceholder()
         statusDetail = profile.destination == .focusedField && !AXIsProcessTrusted()
             ? "No Accessibility permission — result will only be copied"
             : profile.name

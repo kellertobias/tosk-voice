@@ -1,6 +1,9 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import os.log
+
+private let deliveryLog = Logger(subsystem: "de.tobisk.toskvoice", category: "TextDelivery")
 
 @MainActor
 final class ExternalApplicationTracker: NSObject {
@@ -103,11 +106,16 @@ final class CapturedTextTarget {
         return value as! AXUIElement?
     }
 
+    /// Pasting is the primary delivery path: accessibility writes report success
+    /// in apps that silently ignore them (terminals, some web editors), whereas a
+    /// well-formed synthetic Cmd+V behaves exactly like the user pressing it.
     func insert(_ text: String) async -> Bool {
+        if await paste(text, into: element ?? Self.focusedElement(of: processID)) { return true }
+        deliveryLog.log("paste unavailable; falling back to accessibility insert")
         if let element, insertUsingAccessibility(text, into: element) { return true }
         let refreshed = Self.focusedElement(of: processID)
         if let refreshed, insertUsingAccessibility(text, into: refreshed) { return true }
-        return await paste(text, into: element ?? refreshed)
+        return false
     }
 
     private func insertUsingAccessibility(_ text: String, into element: AXUIElement) -> Bool {
@@ -124,24 +132,18 @@ final class CapturedTextTarget {
         listeningPlaceholderRange != nil
     }
 
-    func beginListeningPlaceholder() async -> Bool {
+    /// Only the direct selected-text write is trusted here: value replacement and
+    /// pasting can "succeed" in apps that never show the text, and a phantom
+    /// placeholder would then reroute the final delivery to the wrong path.
+    func beginListeningPlaceholder() -> Bool {
         guard AXIsProcessTrusted(),
               let element,
-              let selectedRange = selectedTextRange(of: element) else { return false }
-
-        var inserted = AXUIElementSetAttributeValue(
-            element,
-            kAXSelectedTextAttribute as CFString,
-            ListeningPlaceholder.text as CFString
-        ) == .success || replaceTextValue(
-            in: element,
-            range: selectedRange,
-            with: ListeningPlaceholder.text
-        )
-        if !inserted, selectTextRange(selectedRange, in: element) {
-            inserted = await paste(ListeningPlaceholder.text, into: element)
-        }
-        guard inserted else { return false }
+              let selectedRange = selectedTextRange(of: element),
+              AXUIElementSetAttributeValue(
+                element,
+                kAXSelectedTextAttribute as CFString,
+                ListeningPlaceholder.text as CFString
+              ) == .success else { return false }
         listeningPlaceholderRange = CFRange(
             location: selectedRange.location,
             length: (ListeningPlaceholder.text as NSString).length
@@ -261,7 +263,10 @@ final class CapturedTextTarget {
     /// If the captured app cannot be made frontmost the paste is aborted rather
     /// than typed into whatever the user is doing right now.
     private func paste(_ text: String, into field: AXUIElement?) async -> Bool {
-        guard AXIsProcessTrusted() else { return false }
+        guard AXIsProcessTrusted() else {
+            deliveryLog.log("paste skipped: process is not accessibility-trusted")
+            return false
+        }
 
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -270,7 +275,10 @@ final class CapturedTextTarget {
         let previousApplication = NSWorkspace.shared.frontmostApplication
         let needsActivation = previousApplication?.processIdentifier != processID
         if needsActivation {
-            guard await activateTargetApplication() else { return false }
+            guard await activateTargetApplication() else {
+                deliveryLog.log("paste skipped: could not bring pid \(self.processID) frontmost")
+                return false
+            }
         }
         if let field {
             AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue)
@@ -279,14 +287,35 @@ final class CapturedTextTarget {
         // The stop shortcut's modifiers are usually still held; combined with
         // the synthetic Cmd they would turn the paste into a different shortcut.
         await waitForModifierRelease()
+        // Give the target time to observe the pasteboard change before Cmd+V.
+        try? await Task.sleep(for: .milliseconds(100))
 
-        guard let source = CGEventSource(stateID: .combinedSessionState),
-              let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return false }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
+        // Mirror a real keypress the way VoiceInk and Maccy do: a private event
+        // source so held physical keys don't bleed into the sequence, actual
+        // Command key transitions rather than only event flags, and the
+        // device-specific left-Command bit (0x8) for apps that inspect it.
+        let source = CGEventSource(stateID: .privateState)
+        source?.setLocalEventsFilterDuringSuppressionState(
+            [.permitLocalMouseEvents, .permitSystemDefinedEvents],
+            state: .eventSuppressionStateSuppressionInterval
+        )
+        let commandFlags = CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x8)
+        guard let commandDown = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: true),
+              let vDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+              let vUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false),
+              let commandUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false) else {
+            deliveryLog.log("paste failed: could not create keyboard events")
+            return false
+        }
+        commandDown.flags = commandFlags
+        vDown.flags = commandFlags
+        vUp.flags = commandFlags
+        commandUp.flags = []
+        for event in [commandDown, vDown, vUp, commandUp] {
+            event.post(tap: .cghidEventTap)
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        deliveryLog.log("posted Cmd+V into pid \(self.processID)")
 
         if needsActivation,
            let previousApplication,
