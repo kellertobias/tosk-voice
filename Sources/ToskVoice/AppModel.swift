@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import AVFoundation
 import Foundation
 
@@ -76,7 +77,9 @@ final class AppModel: ObservableObject {
         pendingCorrection = nil
         capturedTarget = profile.destination == .focusedField ? CapturedTextTarget.capture() : nil
         _ = capturedTarget?.beginListeningPlaceholder()
-        statusDetail = profile.name
+        statusDetail = profile.destination == .focusedField && !AXIsProcessTrusted()
+            ? "No Accessibility permission — result will only be copied"
+            : profile.name
         onOverlayRequested?(profile.overlayPlacement)
         onMenuNeedsUpdate?()
         await correctionService.beginDictation(
@@ -343,8 +346,8 @@ final class AppModel: ObservableObject {
         case .focusedField:
             if let capturedTarget {
                 succeeded = capturedTarget.hasListeningPlaceholder
-                    ? capturedTarget.replaceListeningPlaceholder(with: text)
-                    : capturedTarget.insert(text)
+                    && capturedTarget.replaceListeningPlaceholder(with: text)
+                    || capturedTarget.insert(text)
             }
             if !succeeded {
                 destinationDescription = "Clipboard fallback"
@@ -364,8 +367,17 @@ final class AppModel: ObservableObject {
         capturedTarget = nil
 
         history.add(HistoryEntry(text: text, profileName: profile.name, destinationDescription: destinationDescription))
-        state = succeeded ? .committed : .failed("Copied; original destination unavailable")
-        statusDetail = succeeded ? destinationDescription : "Transcript preserved in History and Clipboard"
+        let accessibilityMissing = profile.destination == .focusedField && !AXIsProcessTrusted()
+        state = succeeded
+            ? .committed
+            : .failed(accessibilityMissing
+                ? "Copied; ToskVoice needs Accessibility permission to insert text"
+                : "Copied; original destination unavailable")
+        statusDetail = succeeded
+            ? destinationDescription
+            : accessibilityMissing
+                ? "Enable ToskVoice under System Settings → Privacy & Security → Accessibility, then restart it"
+                : "Transcript preserved in History and Clipboard"
         onMenuNeedsUpdate?()
         dismissSoon()
     }
