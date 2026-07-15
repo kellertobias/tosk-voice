@@ -102,13 +102,27 @@ package_app() {
   codesign --force --sign "$SIGNING_IDENTITY" --identifier "$BUNDLE_IDENTIFIER" "$APP"
 }
 
+designated_requirement() {
+  codesign -d -r- "$1" 2>/dev/null | grep '^designated'
+}
+
 install_app() {
   local destination="/Applications/$APP_NAME.app"
+  local previous_requirement=""
+  if [[ -d "$destination" ]]; then
+    previous_requirement="$(designated_requirement "$destination")"
+  fi
   pkill -x "$APP_NAME" >/dev/null 2>&1 || true
   if [[ -w /Applications ]]; then
     ditto "$APP" "$destination"
   else
     osascript -e "do shell script \"/usr/bin/ditto '$APP' '$destination'\" with administrator privileges"
+  fi
+  if [[ -n "$previous_requirement" && "$previous_requirement" != "$(designated_requirement "$destination")" ]]; then
+    echo "Code signature changed; the existing Accessibility grant no longer matches."
+    echo "Resetting it so macOS prompts again instead of failing silently."
+    tccutil reset Accessibility "$BUNDLE_IDENTIFIER" || true
+    echo "Re-enable ToskVoice under System Settings → Privacy & Security → Accessibility after launch."
   fi
   open "$destination"
   echo "Installed and opened $destination"
