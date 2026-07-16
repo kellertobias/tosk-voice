@@ -19,6 +19,16 @@
             <key>CFBundleURLSchemes</key><array><string>toskvoice</string></array>
         </dict>
     </array>
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict><key>default</key><string>ToskVoice: Speak Selection</string></dict>
+            <key>NSMessage</key><string>speakSelection</string>
+            <key>NSSendTypes</key>
+            <array><string>NSStringPboardType</string></array>
+        </dict>
+    </array>
     <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>

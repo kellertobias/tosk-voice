@@ -10,6 +10,12 @@ final class TextToSpeechWindowController {
         controller = TextToSpeechController(modelPacks: modelPacks, preferences: preferences)
     }
 
+    /// Opens the window with text supplied by the system Services menu.
+    func show(text: String) {
+        show()
+        controller.text = text
+    }
+
     func show() {
         controller.captureSelectionSource()
         if let window {

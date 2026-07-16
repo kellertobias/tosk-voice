@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var overlayController: OverlayController!
     private var shortcutManager: ShortcutManager!
     private var voiceEditor: VoiceEditorAgentWindowController!
+    private var serviceProvider: TextServiceProvider!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let preferences = PreferencesStore()
@@ -51,6 +52,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onMenuNeedsUpdate = { [weak self] in self?.menuController.updateStatus() }
         model.onMeterLevel = { [weak self] level in self?.menuController.updateMeter(level: level) }
 
+        serviceProvider = TextServiceProvider(textToSpeech: textToSpeech)
+        NSApp.servicesProvider = serviceProvider
+        NSUpdateDynamicServices()
+
         shortcutManager = ShortcutManager(preferences: preferences)
         shortcutManager.onToggle = { [weak model] in model?.toggle() }
         shortcutManager.onPushStart = { [weak model] in Task { await model?.start() } }
@@ -67,5 +72,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
         let instruction = components.queryItems?.first(where: { $0.name == "instruction" })?.value ?? ""
         voiceEditor.show(instruction: instruction)
+    }
+}
+
+/// Handles the "ToskVoice: Speak Selection" entry in the system Services
+/// menu (declared under NSServices in Info.plist). AppKit invokes the
+/// message named there with the selected text on the pasteboard.
+@MainActor
+final class TextServiceProvider: NSObject {
+    private let textToSpeech: TextToSpeechWindowController
+
+    init(textToSpeech: TextToSpeechWindowController) {
+        self.textToSpeech = textToSpeech
+    }
+
+    @objc func speakSelection(_ pasteboard: NSPasteboard, userData: String, error: AutoreleasingUnsafeMutablePointer<NSString>) {
+        guard let text = pasteboard.string(forType: .string), !text.isEmpty else {
+            error.pointee = "No text was selected." as NSString
+            return
+        }
+        textToSpeech.show(text: text)
     }
 }

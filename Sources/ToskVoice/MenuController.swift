@@ -95,6 +95,11 @@ final class MenuController: NSObject, NSMenuDelegate {
         let shortcut = NSMenuItem(title: model.state.isActive ? "" : model.preferences.toggleShortcut.label, action: nil, keyEquivalent: "")
         shortcut.isEnabled = false
         if !model.state.isActive { menu.addItem(shortcut) }
+
+        let meetingItem = NSMenuItem(title: "Meeting Transcript…", action: #selector(showMeeting), keyEquivalent: "")
+        meetingItem.target = self
+        meetingItem.image = NSImage(systemSymbolName: "person.2.wave.2", accessibilityDescription: nil)
+        menu.addItem(meetingItem)
         menu.addItem(.separator())
 
         menu.addItem(submenuItem(title: "Profile: \(model.profile.name)", image: "square.stack.3d.up", entries: model.preferences.profiles.map { profile in
@@ -134,11 +139,6 @@ final class MenuController: NSObject, NSMenuDelegate {
         ttsItem.target = self
         ttsItem.image = NSImage(systemSymbolName: "speaker.wave.2.bubble", accessibilityDescription: nil)
         menu.addItem(ttsItem)
-
-        let meetingItem = NSMenuItem(title: "Meeting Transcript…", action: #selector(showMeeting), keyEquivalent: "")
-        meetingItem.target = self
-        meetingItem.image = NSImage(systemSymbolName: "person.2.wave.2", accessibilityDescription: nil)
-        menu.addItem(meetingItem)
 
         let editorItem = NSMenuItem(title: "Voice Editor…", action: #selector(showVoiceEditor), keyEquivalent: "")
         editorItem.target = self
