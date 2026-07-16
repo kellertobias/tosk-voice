@@ -105,15 +105,11 @@ final class SystemAudioTap {
         }
         aggregateID = newAggregateID
 
+        // The IO block runs on Core Audio's HAL thread; route it through a
+        // non-actor bridge so it does not inherit main-actor isolation.
+        let bridge = TapIOBridge(format: format, onBuffer: onBuffer)
         var newProcID: AudioDeviceIOProcID?
-        status = AudioDeviceCreateIOProcIDWithBlock(&newProcID, newAggregateID, queue) { _, inputData, _, _, _ in
-            guard let buffer = AVAudioPCMBuffer(
-                pcmFormat: format,
-                bufferListNoCopy: inputData,
-                deallocator: nil
-            ), buffer.frameLength > 0 else { return }
-            onBuffer(buffer)
-        }
+        status = AudioDeviceCreateIOProcIDWithBlock(&newProcID, newAggregateID, queue, bridge.makeIOBlock())
         guard status == noErr, let procID = newProcID else {
             stop()
             throw SystemAudioTapError.ioProcFailed(status)
@@ -247,6 +243,29 @@ final class SystemAudioTap {
         var dataSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
         guard AudioObjectGetPropertyData(tapID, &address, 0, nil, &dataSize, &description) == noErr else { return nil }
         return AVAudioFormat(streamDescription: &description)
+    }
+}
+
+/// Bridges Core Audio's realtime IO callback to a Sendable buffer handler
+/// without inheriting the actor isolation of the code that created the tap.
+private final class TapIOBridge: @unchecked Sendable {
+    private let format: AVAudioFormat
+    private let onBuffer: @Sendable (AVAudioPCMBuffer) -> Void
+
+    init(format: AVAudioFormat, onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) {
+        self.format = format
+        self.onBuffer = onBuffer
+    }
+
+    nonisolated func makeIOBlock() -> AudioDeviceIOBlock {
+        { [format, onBuffer] _, inputData, _, _, _ in
+            guard let buffer = AVAudioPCMBuffer(
+                pcmFormat: format,
+                bufferListNoCopy: inputData,
+                deallocator: nil
+            ), buffer.frameLength > 0 else { return }
+            onBuffer(buffer)
+        }
     }
 }
 

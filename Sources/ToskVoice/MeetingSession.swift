@@ -175,9 +175,7 @@ final class MeetingSession {
                 },
                 onLevel: { level in callbacks.onLevel(.remote, level) }
             )
-            try systemTap.run { buffer in
-                remoteHandler(buffer, AVAudioTime(hostTime: mach_absolute_time()))
-            }
+            try systemTap.run(onBuffer: Self.makeTapBufferHandler(remoteHandler))
         } catch {
             systemTap.stop()
             await remoteLane.cancel()
@@ -207,9 +205,7 @@ final class MeetingSession {
                 },
                 onLevel: { level in callbacks.onLevel(.me, level) }
             )
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: micFormat) { buffer, time in
-                micHandler(buffer, time)
-            }
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: micFormat, block: micHandler)
             audioEngine.prepare()
             try audioEngine.start()
             engine = audioEngine
@@ -220,6 +216,14 @@ final class MeetingSession {
             engine = nil
             throw error
         }
+    }
+
+    /// Built by a nonisolated factory so the returned closure carries no
+    /// actor isolation; Core Audio invokes it on its own realtime thread.
+    private nonisolated static func makeTapBufferHandler(
+        _ handler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) -> @Sendable (AVAudioPCMBuffer) -> Void {
+        { buffer in handler(buffer, AVAudioTime(hostTime: mach_absolute_time())) }
     }
 
     func stop() async {
