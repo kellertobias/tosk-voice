@@ -35,7 +35,9 @@ final class SystemAudioTap {
     private(set) var tapFormat: AVAudioFormat?
 
     /// Lists running applications that currently have a Core Audio process
-    /// object, deduplicated by bundle identifier.
+    /// object, deduplicated by bundle identifier. Helper processes (e.g.
+    /// com.google.Chrome.helper) are folded into their owning app's entry;
+    /// tapping matches them again by bundle-ID prefix.
     static func availableApps() -> [TappableApp] {
         guard let objectIDs = readProcessObjectList() else { return [] }
         var seen = Set<String>()
@@ -47,6 +49,12 @@ final class SystemAudioTap {
                   seen.insert(bundleID).inserted else { continue }
             let name = NSRunningApplication(processIdentifier: pid)?.localizedName ?? bundleID
             apps.append(TappableApp(objectID: objectID, pid: pid, bundleID: bundleID, name: name))
+        }
+        // Drop helpers whose owner is present: keep "com.google.Chrome",
+        // fold "com.google.Chrome.helper" into it.
+        let bundleIDs = Set(apps.map(\.bundleID))
+        apps.removeAll { app in
+            bundleIDs.contains { other in other != app.bundleID && app.bundleID.hasPrefix(other + ".") }
         }
         return apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
@@ -206,8 +214,14 @@ final class SystemAudioTap {
         return pointer.pointee
     }
 
+    /// All process objects belonging to an app, including its helper
+    /// processes: browsers and conferencing apps render audio from helpers
+    /// whose bundle ID extends the app's (com.google.Chrome.helper).
     private static func processObjects(withBundleID bundleID: String) -> [AudioObjectID] {
-        (readProcessObjectList() ?? []).filter { readProcessBundleID($0) == bundleID }
+        (readProcessObjectList() ?? []).filter { objectID in
+            guard let processBundleID = readProcessBundleID(objectID) else { return false }
+            return processBundleID == bundleID || processBundleID.hasPrefix(bundleID + ".")
+        }
     }
 
     private static func translatePID(_ pid: Int32) -> AudioObjectID? {
