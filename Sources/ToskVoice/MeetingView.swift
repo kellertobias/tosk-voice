@@ -14,6 +14,7 @@ struct MeetingQAEntry: Identifiable, Sendable {
 final class MeetingController: ObservableObject {
     @Published var isRunning = false
     @Published var isPaused = false
+    @Published var isMicMuted = false
     @Published var status = "Ready"
     @Published var micLevel: Float = 0
     @Published var remoteLevel: Float = 0
@@ -68,6 +69,15 @@ final class MeetingController: ObservableObject {
         status = isPaused ? "Paused" : "Listening"
     }
 
+    func toggleMicMute() {
+        isMicMuted.toggle()
+        session.isMicMuted = isMicMuted
+        if isMicMuted {
+            micLevel = 0
+            micVolatile = ""
+        }
+    }
+
     func start() async {
         guard !isRunning else { return }
         segments = []
@@ -77,6 +87,7 @@ final class MeetingController: ObservableObject {
         remoteVolatile = ""
         isPaused = false
         session.isPaused = false
+        session.isMicMuted = isMicMuted
         status = "Starting…"
         let profile = profileProvider()
         let target: SystemAudioTap.Target
@@ -104,6 +115,7 @@ final class MeetingController: ObservableObject {
                     },
                     onLevel: { [weak self] speaker, level in
                         guard self?.isPaused != true else { return }
+                        if speaker == .me, self?.isMicMuted == true { return }
                         switch speaker {
                         case .me: self?.micLevel = level
                         case .remote: self?.remoteLevel = level
@@ -294,7 +306,21 @@ private struct MeetingView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             HStack(spacing: 20) {
-                LevelMeter(label: "Mic (Me)", systemImage: "mic.fill", level: controller.micLevel, tint: MeetingSpeaker.me.tint)
+                HStack(spacing: 8) {
+                    LevelMeter(
+                        label: controller.isMicMuted ? "Mic (muted)" : "Mic (Me)",
+                        systemImage: controller.isMicMuted ? "mic.slash.fill" : "mic.fill",
+                        level: controller.micLevel,
+                        tint: controller.isMicMuted ? .secondary : MeetingSpeaker.me.tint
+                    )
+                    Button {
+                        controller.toggleMicMute()
+                    } label: {
+                        Image(systemName: controller.isMicMuted ? "mic.slash.fill" : "mic.fill")
+                    }
+                    .help(controller.isMicMuted ? "Unmute microphone — transcribe both sides again" : "Mute microphone — transcribe only the remote side")
+                    .tint(controller.isMicMuted ? .red : nil)
+                }
                 LevelMeter(label: "Remote", systemImage: "person.2.wave.2.fill", level: controller.remoteLevel, tint: MeetingSpeaker.remote.tint)
             }
             Divider()

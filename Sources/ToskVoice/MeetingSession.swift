@@ -149,12 +149,18 @@ final class MeetingSession {
     private let systemTap = SystemAudioTap()
     private var engine: AVAudioEngine?
     private let pauseGate = PauseGate()
+    private let micMuteGate = PauseGate()
 
     var isRunning: Bool { engine != nil }
 
     var isPaused: Bool {
         get { pauseGate.isPaused }
         set { pauseGate.isPaused = newValue }
+    }
+
+    var isMicMuted: Bool {
+        get { micMuteGate.isPaused }
+        set { micMuteGate.isPaused = newValue }
     }
 
     struct Callbacks {
@@ -223,7 +229,7 @@ final class MeetingSession {
                 },
                 onLevel: { level in callbacks.onLevel(.me, level) }
             )
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: micFormat, block: Self.makeGatedHandler(micHandler, gate: pauseGate))
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: micFormat, block: Self.makeGatedHandler(micHandler, gates: [pauseGate, micMuteGate]))
             audioEngine.prepare()
             try audioEngine.start()
             engine = audioEngine
@@ -250,10 +256,10 @@ final class MeetingSession {
 
     private nonisolated static func makeGatedHandler(
         _ handler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void,
-        gate: PauseGate
+        gates: [PauseGate]
     ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
         { buffer, time in
-            guard !gate.isPaused else { return }
+            guard !gates.contains(where: \.isPaused) else { return }
             handler(buffer, time)
         }
     }
