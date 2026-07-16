@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         serviceProvider = TextServiceProvider(textToSpeech: textToSpeech)
         NSApp.servicesProvider = serviceProvider
         NSUpdateDynamicServices()
+        textToSpeech.autoStartManagedServerIfEnabled()
 
         shortcutManager = ShortcutManager(preferences: preferences)
         shortcutManager.onToggle = { [weak model] in model?.toggle() }

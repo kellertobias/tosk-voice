@@ -10,6 +10,11 @@ final class TextToSpeechWindowController {
         controller = TextToSpeechController(modelPacks: modelPacks, preferences: preferences)
     }
 
+    /// Starts the managed TTS server at app launch when the user enabled it.
+    func autoStartManagedServerIfEnabled() {
+        controller.autoStartManagedServerIfEnabled()
+    }
+
     /// Opens the window with text supplied by the system Services menu.
     func show(text: String) {
         show()
@@ -27,7 +32,8 @@ final class TextToSpeechWindowController {
         let hosting = NSHostingController(rootView: TextToSpeechView(
             controller: controller,
             preferences: controller.preferences,
-            managed: controller.managedServer
+            managed: controller.managedServer,
+            installer: controller.installer
         ))
         let window = NSWindow(contentViewController: hosting)
         window.title = "ToskVoice — Text to Speech"
@@ -46,6 +52,7 @@ private struct TextToSpeechView: View {
     @ObservedObject var controller: TextToSpeechController
     @ObservedObject var preferences: PreferencesStore
     @ObservedObject var managed: ManagedTTSServer
+    @ObservedObject var installer: TTSServerInstaller
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -128,9 +135,55 @@ private struct TextToSpeechView: View {
                 }
             }
             Divider().padding(.vertical, 4)
+            setupSection
+            Divider().padding(.vertical, 4)
             managedServerSection
         }
         .padding(.top, 6)
+    }
+
+    @ViewBuilder
+    private var setupSection: some View {
+        HStack(spacing: 8) {
+            Text("One-click setup:")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ForEach(TTSServerPreset.allCases) { preset in
+                Button("Set Up \(preset.label)…") { confirmSetup(preset) }
+                    .disabled(installer.state.isRunning || managed.isRunning)
+            }
+            if installer.state.isRunning {
+                ProgressView().controlSize(.small)
+                Button("Cancel") { installer.cancel() }
+            }
+            Spacer()
+        }
+        if installer.state != .idle {
+            HStack(spacing: 6) {
+                Text(installer.state.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer()
+                if installer.state.isRunning, let lastLine = installer.recentOutput.last {
+                    Text(lastLine)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
+            }
+        }
+    }
+
+    private func confirmSetup(_ preset: TTSServerPreset) {
+        let alert = NSAlert()
+        alert.messageText = "Set up \(preset.label)?"
+        alert.informativeText = preset.summary + "\n\nOn success, the server settings above are configured automatically."
+        alert.addButton(withTitle: "Install")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        controller.setUpServer(preset)
     }
 
     @ViewBuilder
@@ -156,6 +209,9 @@ private struct TextToSpeechView: View {
             }
             .disabled(!managed.isRunning && preferences.ttsServer.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty)
         }
+        Toggle("Start the server automatically when ToskVoice launches", isOn: autoStartBinding)
+            .font(.caption)
+            .disabled(preferences.ttsServer.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty)
         HStack(spacing: 6) {
             Circle()
                 .fill(managedTintColor(managed.state))
@@ -182,6 +238,13 @@ private struct TextToSpeechView: View {
         case .running: .green
         case .failed: .red
         }
+    }
+
+    private var autoStartBinding: Binding<Bool> {
+        Binding(
+            get: { preferences.ttsServer.autoStart },
+            set: { preferences.ttsServer.autoStart = $0 }
+        )
     }
 
     private var apiStyleBinding: Binding<TTSServerAPIStyle> {

@@ -15,6 +15,7 @@ final class TextToSpeechController: ObservableObject {
     let modelPacks: ModelPackController
     let preferences: PreferencesStore
     let managedServer = ManagedTTSServer()
+    let installer = TTSServerInstaller()
     private let synthesizer = AVSpeechSynthesizer()
     private var neuralTask: Task<Void, Never>?
     private var playbackEngine: AVAudioEngine?
@@ -172,6 +173,27 @@ final class TextToSpeechController: ObservableObject {
                 self?.status = error.localizedDescription
             }
         }
+    }
+
+    /// Installs a server preset and, on success, applies its configuration
+    /// (keeping the existing API key and auto-start choice).
+    func setUpServer(_ preset: TTSServerPreset) {
+        installer.install(preset) { [weak self] in
+            guard let self else { return }
+            var config = preset.configuration(autoStart: preferences.ttsServer.autoStart)
+            config.apiKey = preferences.ttsServer.apiKey
+            preferences.ttsServer = config
+            status = "\(preset.label) configured — Server Voice is ready"
+        }
+    }
+
+    /// Starts the managed server at app launch when configured to.
+    func autoStartManagedServerIfEnabled() {
+        let config = preferences.ttsServer
+        guard config.autoStart,
+              !config.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty,
+              !managedServer.isRunning else { return }
+        managedServer.start(command: config.managedCommand, healthURL: config.healthProbeURL)
     }
 
     /// Launches the managed server when one is configured and waits until it

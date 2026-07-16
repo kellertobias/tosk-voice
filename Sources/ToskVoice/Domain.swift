@@ -105,6 +105,8 @@ struct TTSServerConfiguration: Codable, Equatable, Sendable {
     /// Shell command that launches a local server for this endpoint
     /// (managed-server mode); empty when the server is managed externally.
     var managedCommand: String = ""
+    /// Launch the managed server automatically when ToskVoice starts.
+    var autoStart: Bool = false
 
     init() {}
 
@@ -118,6 +120,7 @@ struct TTSServerConfiguration: Codable, Equatable, Sendable {
         voice = try container.decodeIfPresent(String.self, forKey: .voice) ?? ""
         apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
         managedCommand = try container.decodeIfPresent(String.self, forKey: .managedCommand) ?? ""
+        autoStart = try container.decodeIfPresent(Bool.self, forKey: .autoStart) ?? false
     }
 
     var isConfigured: Bool { !baseURL.trimmingCharacters(in: .whitespaces).isEmpty }
