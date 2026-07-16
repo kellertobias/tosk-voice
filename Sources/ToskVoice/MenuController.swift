@@ -8,15 +8,17 @@ final class MenuController: NSObject, NSMenuDelegate {
     private let history: HistoryWindowController
     private let textToSpeech: TextToSpeechWindowController
     private let voiceEditor: VoiceEditorAgentWindowController
+    private let meeting: MeetingWindowController
     private var meterLevels: [CGFloat] = [0.12, 0.12, 0.12, 0.12]
     private let statusMenu = NSMenu()
 
-    init(model: AppModel, settings: SettingsWindowController, history: HistoryWindowController, textToSpeech: TextToSpeechWindowController, voiceEditor: VoiceEditorAgentWindowController) {
+    init(model: AppModel, settings: SettingsWindowController, history: HistoryWindowController, textToSpeech: TextToSpeechWindowController, voiceEditor: VoiceEditorAgentWindowController, meeting: MeetingWindowController) {
         self.model = model
         self.settings = settings
         self.history = history
         self.textToSpeech = textToSpeech
         self.voiceEditor = voiceEditor
+        self.meeting = meeting
         super.init()
         if let button = statusItem.button {
             setStatusImage(
@@ -133,6 +135,11 @@ final class MenuController: NSObject, NSMenuDelegate {
         ttsItem.image = NSImage(systemSymbolName: "speaker.wave.2.bubble", accessibilityDescription: nil)
         menu.addItem(ttsItem)
 
+        let meetingItem = NSMenuItem(title: "Meeting Transcript…", action: #selector(showMeeting), keyEquivalent: "")
+        meetingItem.target = self
+        meetingItem.image = NSImage(systemSymbolName: "person.2.wave.2", accessibilityDescription: nil)
+        menu.addItem(meetingItem)
+
         let editorItem = NSMenuItem(title: "Voice Editor…", action: #selector(showVoiceEditor), keyEquivalent: "")
         editorItem.target = self
         editorItem.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: nil)
@@ -180,6 +187,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     @objc private func showHistory() { history.show() }
     @objc private func showTextToSpeech() { textToSpeech.show() }
     @objc private func showVoiceEditor() { voiceEditor.show() }
+    @objc private func showMeeting() { meeting.show() }
     @objc private func toggleDiarization() { model.toggleDiarization() }
     @objc private func toggleSpokenCorrections() { model.toggleSpokenCorrections() }
     @objc private func toggleCondensedOutput() { model.toggleCondensedOutput() }

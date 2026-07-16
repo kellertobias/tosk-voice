@@ -22,6 +22,7 @@
     <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAudioCaptureUsageDescription</key><string>ToskVoice captures the audio of the selected meeting app to transcribe remote participants locally. Nothing leaves this Mac.</string>
     <key>NSMicrophoneUsageDescription</key><string>ToskVoice uses the selected microphone for local speech-to-text dictation.</string>
     <key>NSSpeechRecognitionUsageDescription</key><string>ToskVoice transcribes speech locally into text you choose to insert or save.</string>
     <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Tobisk</string>

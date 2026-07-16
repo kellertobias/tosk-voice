@@ -31,6 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let textToSpeech = TextToSpeechWindowController(modelPacks: modelPacks, preferences: preferences)
         let voiceEditorWindow = VoiceEditorAgentWindowController(preferences: agentPreferences)
         voiceEditor = voiceEditorWindow
+        let appModel = model!
+        let meeting = MeetingWindowController(preferences: preferences) { appModel.profile }
         let settings = SettingsWindowController(
             model: model,
             showTextToSpeech: { textToSpeech.show() },
@@ -41,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let selectedTab = SettingsRelaunchState.consumeSelectedTab() {
             settings.show(tab: selectedTab)
         }
-        menuController = MenuController(model: model, settings: settings, history: historyWindow, textToSpeech: textToSpeech, voiceEditor: voiceEditor)
+        menuController = MenuController(model: model, settings: settings, history: historyWindow, textToSpeech: textToSpeech, voiceEditor: voiceEditor, meeting: meeting)
         overlayController = OverlayController(model: model, statusButton: menuController.statusItem.button)
 
         model.onOverlayRequested = { [weak self] placement in self?.overlayController.show(at: placement) }
