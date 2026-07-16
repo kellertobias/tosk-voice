@@ -30,13 +30,20 @@ enum TTSServerPreset: String, CaseIterable, Identifiable {
             """
             set -euo pipefail
             command -v uv >/dev/null 2>&1 || brew install uv
+            brew list portaudio >/dev/null 2>&1 || brew install portaudio
             mkdir -p "$HOME/src"
             [ -d "$HOME/src/fish-speech" ] || git clone https://github.com/fishaudio/fish-speech "$HOME/src/fish-speech"
             cd "$HOME/src/fish-speech"
-            [ -d .venv ] || uv venv --python 3.12
-            uv pip install -e .
+            uv sync
             uv pip install 'huggingface_hub[cli]'
-            uv run huggingface-cli download fishaudio/openaudio-s1-mini --local-dir checkpoints/openaudio-s1-mini
+            if ! uv run hf auth whoami >/dev/null 2>&1; then
+                echo "The openaudio-s1-mini model is gated on Hugging Face."
+                echo "1) Accept the license at https://huggingface.co/fishaudio/openaudio-s1-mini"
+                echo "2) In Terminal run: cd ~/src/fish-speech && uv run hf auth login"
+                echo "Then run this install again."
+                exit 1
+            fi
+            uv run hf download fishaudio/openaudio-s1-mini --local-dir checkpoints/openaudio-s1-mini
             echo "SETUP-COMPLETE"
             """
         case .xtts:
