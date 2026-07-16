@@ -53,7 +53,44 @@ final class MeetingController: ObservableObject {
     }
 
     func toggle() {
-        Task { isRunning ? await stop() : await start() }
+        if isRunning {
+            Task { await stop() }
+            return
+        }
+        if segments.isEmpty {
+            Task { await start() }
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Start a new transcript?"
+        alert.informativeText = "The window already contains a transcript. You can add the new recording to it or start over."
+        alert.addButton(withTitle: "Add to Transcript")
+        alert.addButton(withTitle: "Start New")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            Task { await start(resetTranscript: false) }
+        case .alertSecondButtonReturn:
+            if hasUnsavedContent {
+                let confirm = NSAlert()
+                confirm.messageText = "Discard the unsaved transcript?"
+                confirm.informativeText = "The current transcript has not been saved. Starting new discards it."
+                confirm.addButton(withTitle: "Save First…")
+                confirm.addButton(withTitle: "Discard")
+                confirm.addButton(withTitle: "Cancel")
+                switch confirm.runModal() {
+                case .alertFirstButtonReturn:
+                    guard saveTranscript(in: NSApp.keyWindow) else { return }
+                case .alertSecondButtonReturn:
+                    break
+                default:
+                    return
+                }
+            }
+            Task { await start(resetTranscript: true) }
+        default:
+            break
+        }
     }
 
     func togglePause() {
@@ -78,11 +115,13 @@ final class MeetingController: ObservableObject {
         }
     }
 
-    func start() async {
+    func start(resetTranscript: Bool = true) async {
         guard !isRunning else { return }
-        segments = []
-        qaEntries = []
-        savedSegmentCount = 0
+        if resetTranscript {
+            segments = []
+            qaEntries = []
+            savedSegmentCount = 0
+        }
         micVolatile = ""
         remoteVolatile = ""
         isPaused = false
@@ -123,7 +162,7 @@ final class MeetingController: ObservableObject {
                     }
                 )
             )
-            sessionStart = Date()
+            if resetTranscript || sessionStart == nil { sessionStart = Date() }
             isRunning = true
             status = "Listening"
         } catch {
