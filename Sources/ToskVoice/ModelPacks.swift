@@ -110,6 +110,7 @@ final class ModelPackController: ObservableObject {
 
     func prepareSpeakerKit() async throws -> SpeakerKit {
         if let speakerKit { return speakerKit }
+        removeRepoIfPartiallyDownloaded("argmaxinc/speakerkit-coreml")
         speakerState = .downloading(nil)
         do {
             // download must stay enabled: the flag gates ALL model resolution
@@ -139,8 +140,24 @@ final class ModelPackController: ObservableObject {
         }
     }
 
+    /// Removes a model repo whose previous download was interrupted (the app
+    /// quit mid-fetch). Leftover .incomplete markers mean partial files that
+    /// the downloader's local-presence check would wrongly accept, making
+    /// Core ML fail later with missing-weights errors.
+    private func removeRepoIfPartiallyDownloaded(_ repoPath: String) {
+        let repo = FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("huggingface/models/\(repoPath)", isDirectory: true)
+        guard let files = FileManager.default.enumerator(at: repo, includingPropertiesForKeys: nil) else { return }
+        for case let file as URL in files where file.lastPathComponent.hasSuffix(".incomplete") {
+            try? FileManager.default.removeItem(at: repo)
+            return
+        }
+    }
+
     func prepareNeuralVoice() async throws -> TTSKit {
         if let ttsKit { return ttsKit }
+        removeRepoIfPartiallyDownloaded("argmaxinc/ttskit-coreml")
         neuralVoiceState = .downloading(nil)
         do {
             let config = TTSKitConfig(
