@@ -112,7 +112,10 @@ final class ModelPackController: ObservableObject {
         if let speakerKit { return speakerKit }
         speakerState = .downloading(nil)
         do {
-            let config = PyannoteConfig(download: false, load: false)
+            // download must stay enabled: the flag gates ALL model resolution
+            // in SpeakerKit, including the explicit downloadModels() below —
+            // with false it throws "download is disabled" on first install.
+            let config = PyannoteConfig(download: true, load: false)
             let kit = try await SpeakerKit(config)
             if let diarizer = kit.diarizer as? SpeakerKitDiarizer {
                 let modelManager = diarizer as ModelManager
