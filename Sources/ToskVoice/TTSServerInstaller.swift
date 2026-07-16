@@ -36,11 +36,8 @@ enum TTSServerPreset: String, CaseIterable, Identifiable {
             cd "$HOME/src/fish-speech"
             uv sync
             uv pip install 'huggingface_hub[cli]'
-            if ! uv run hf auth whoami >/dev/null 2>&1; then
-                echo "The openaudio-s1-mini model is gated on Hugging Face."
-                echo "1) Accept the license at https://huggingface.co/fishaudio/openaudio-s1-mini"
-                echo "2) In Terminal run: cd ~/src/fish-speech && uv run hf auth login"
-                echo "Then run this install again."
+            if [ -z "${HF_TOKEN:-}" ] && ! uv run hf auth whoami >/dev/null 2>&1; then
+                echo "NEEDS-HF-TOKEN"
                 exit 1
             fi
             uv run hf download fishaudio/openaudio-s1-mini --local-dir checkpoints/openaudio-s1-mini
@@ -114,16 +111,32 @@ final class TTSServerInstaller: ObservableObject {
 
     private var process: Process?
 
+    /// True when the last failure was a missing gated-model credential, so
+    /// the caller can prompt for a Hugging Face token.
+    @Published private(set) var needsHuggingFaceToken = false
+
     /// Starts the installation; `onSuccess` runs on completion so the caller
-    /// can apply the preset's configuration.
-    func install(_ preset: TTSServerPreset, onSuccess: @escaping @MainActor () -> Void) {
+    /// can apply the preset's configuration. `huggingFaceToken`, when set, is
+    /// passed to the child process as HF_TOKEN for gated model downloads.
+    func install(
+        _ preset: TTSServerPreset,
+        huggingFaceToken: String = "",
+        onSuccess: @escaping @MainActor () -> Void
+    ) {
         guard !state.isRunning else { return }
         recentOutput = []
+        needsHuggingFaceToken = false
         state = .running(preset)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-l", "-c", preset.installScript]
+        let token = huggingFaceToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty {
+            var environment = ProcessInfo.processInfo.environment
+            environment["HF_TOKEN"] = token
+            process.environment = environment
+        }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -144,6 +157,9 @@ final class TTSServerInstaller: ObservableObject {
                 if finished.terminationStatus == 0 {
                     self.state = .succeeded(preset)
                     onSuccess()
+                } else if self.recentOutput.contains("NEEDS-HF-TOKEN") {
+                    self.needsHuggingFaceToken = true
+                    self.state = .failed("A Hugging Face access token is required for the gated model.")
                 } else {
                     let hint = self.recentOutput.suffix(3).joined(separator: " · ")
                     self.state = .failed(hint.isEmpty ? "exit status \(finished.terminationStatus)" : hint)

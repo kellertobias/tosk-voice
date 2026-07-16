@@ -493,6 +493,7 @@ private struct TTSServerSettingsSection: View {
     @ObservedObject var managed: ManagedTTSServer
     @ObservedObject var installer: TTSServerInstaller
     let controller: TextToSpeechController
+    @State private var showingFishAssistant = false
 
     var body: some View {
         Section("TTS Server (Fish-Speech / XTTS)") {
@@ -519,6 +520,13 @@ private struct TTSServerSettingsSection: View {
                 Text("The engine appears in the Text to Speech window as \"\(preferences.ttsServer.displayName)\".")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+        .sheet(isPresented: $showingFishAssistant) {
+            FishSetupAssistant(
+                token: binding(\.huggingFaceToken),
+                installer: installer,
+                onInstall: { controller.setUpServer(.fishSpeech) }
+            )
         }
     }
 
@@ -578,6 +586,12 @@ private struct TTSServerSettingsSection: View {
     }
 
     private func confirmInstall(_ preset: TTSServerPreset) {
+        // Fish-Speech needs a gated Hugging Face model, so it gets the guided
+        // assistant; XTTS installs directly after a confirmation.
+        if preset == .fishSpeech {
+            showingFishAssistant = true
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "Install \(preset.label)?"
         alert.informativeText = preset.summary + "\n\nOn success, the server is configured automatically."
@@ -615,5 +629,102 @@ private struct TTSServerSettingsSection: View {
             get: { preferences.ttsServer[keyPath: keyPath] },
             set: { preferences.ttsServer[keyPath: keyPath] = $0 }
         )
+    }
+}
+
+/// Guided Fish-Speech setup: leads the user through accepting the gated
+/// model's license and pasting a Hugging Face access token, then installs.
+/// No terminal required.
+private struct FishSetupAssistant: View {
+    @Binding var token: String
+    @ObservedObject var installer: TTSServerInstaller
+    let onInstall: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var acceptedLicense = false
+
+    private let licenseURL = URL(string: "https://huggingface.co/fishaudio/openaudio-s1-mini")!
+    private let tokenURL = URL(string: "https://huggingface.co/settings/tokens")!
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Set Up Fish-Speech")
+                .font(.title2.bold())
+            Text("Fish-Speech's voice model is hosted on Hugging Face and needs a free account. ToskVoice will download and configure everything — just two one-time steps.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            step(number: 1, title: "Accept the model license") {
+                Text("Open the model page and click the button to accept its license (you'll need to be signed in to Hugging Face).")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Open Model License Page") { NSWorkspace.shared.open(licenseURL) }
+                    Toggle("I accepted the license", isOn: $acceptedLicense)
+                        .toggleStyle(.checkbox)
+                }
+            }
+
+            step(number: 2, title: "Paste a Hugging Face access token") {
+                Text("Create a free “Read” token, then paste it here. ToskVoice stores it and uses it only to download the model.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    SecureField("hf_…", text: $token)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Get a Token") { NSWorkspace.shared.open(tokenURL) }
+                }
+            }
+
+            if installer.state.isRunning {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    CopyableStatusText(text: installer.state.label)
+                }
+                if let line = installer.recentOutput.last {
+                    Text(line).font(.caption2.monospaced()).foregroundStyle(.tertiary)
+                        .lineLimit(1).truncationMode(.head)
+                }
+            } else if case .failed(let message) = installer.state {
+                CopyableStatusText(text: message, color: .red)
+            }
+
+            Spacer(minLength: 0)
+            HStack {
+                Button("Cancel") {
+                    if installer.state.isRunning { installer.cancel() }
+                    dismiss()
+                }
+                Spacer()
+                Button("Download & Install") { onInstall() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canInstall)
+            }
+        }
+        .padding(22)
+        .frame(width: 520, height: 460)
+        .onChange(of: installer.state) {
+            if case .succeeded = installer.state { dismiss() }
+        }
+    }
+
+    private var canInstall: Bool {
+        acceptedLicense
+            && !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !installer.state.isRunning
+    }
+
+    @ViewBuilder
+    private func step(number: Int, title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("\(number)")
+                    .font(.headline)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(.tint.opacity(0.2)))
+                Text(title).font(.headline)
+            }
+            content()
+                .padding(.leading, 32)
+        }
     }
 }

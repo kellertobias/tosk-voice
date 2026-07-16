@@ -200,10 +200,12 @@ final class TextToSpeechController: ObservableObject {
     /// Installs a server preset and, on success, applies its configuration
     /// (keeping the existing API key and auto-start choice).
     func setUpServer(_ preset: TTSServerPreset) {
-        installer.install(preset) { [weak self] in
+        installer.install(preset, huggingFaceToken: preferences.ttsServer.huggingFaceToken) { [weak self] in
             guard let self else { return }
-            var config = preset.configuration(autoStart: preferences.ttsServer.autoStart)
-            config.apiKey = preferences.ttsServer.apiKey
+            let previous = preferences.ttsServer
+            var config = preset.configuration(autoStart: previous.autoStart)
+            config.apiKey = previous.apiKey
+            config.huggingFaceToken = previous.huggingFaceToken
             preferences.ttsServer = config
             status = "\(preset.label) configured — Server Voice is ready"
         }
