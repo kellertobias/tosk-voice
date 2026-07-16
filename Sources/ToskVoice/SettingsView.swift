@@ -410,10 +410,7 @@ private struct ModelPackRow: View {
                 }
             }
             if let errorMessage = state.errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
+                CopyableStatusText(text: errorMessage, color: .red)
             }
         }
     }
@@ -549,7 +546,10 @@ private struct TTSServerSettingsSection: View {
             .disabled(preferences.ttsServer.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         if installer.state != .idle {
-            Text(installer.state.label).font(.caption).foregroundStyle(.secondary)
+            CopyableStatusText(
+                text: installer.state.label,
+                color: { if case .failed = installer.state { .red } else { nil } }()
+            )
             if installer.state.isRunning, let line = installer.recentOutput.last {
                 Text(line).font(.caption2.monospaced()).foregroundStyle(.tertiary)
                     .lineLimit(1).truncationMode(.head)
@@ -557,8 +557,13 @@ private struct TTSServerSettingsSection: View {
         }
         Toggle("Start the server automatically when ToskVoice launches", isOn: binding(\.autoStart))
             .disabled(preferences.ttsServer.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty)
-        LabeledContent("Server status", value: managed.state.label)
-            .font(.caption)
+        LabeledContent("Server status") {
+            CopyableStatusText(
+                text: managed.state.label,
+                color: { if case .failed = managed.state { .red } else { nil } }()
+            )
+        }
+        .font(.caption)
     }
 
     @ViewBuilder

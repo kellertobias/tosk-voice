@@ -56,7 +56,7 @@ private struct TextToSpeechView: View {
                 Button("Use Selection") { controller.useCurrentSelection() }
                 Button("Open Text File…") { controller.openTextFile() }
                 Spacer()
-                Text(controller.status).font(.caption).foregroundStyle(.secondary)
+                CopyableStatusText(text: controller.status)
             }
             TextEditor(text: $controller.text)
                 .font(.body)

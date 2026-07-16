@@ -445,7 +445,7 @@ private struct MeetingView: View {
                 .help("After stopping, label remote participants as Speaker 1, 2, 3… using the local SpeakerKit model.")
                 .disabled(controller.isRunning)
             Spacer()
-            Text(controller.status).font(.caption).foregroundStyle(.secondary)
+            CopyableStatusText(text: controller.status)
             if controller.isRunning {
                 Button(controller.isPaused ? "Resume" : "Pause") { controller.togglePause() }
             }
