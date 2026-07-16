@@ -137,13 +137,24 @@ final class TextToSpeechController: ObservableObject {
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 let key = configuration.apiKey.trimmingCharacters(in: .whitespaces)
                 if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
-                var body: [String: Any] = [
-                    "model": configuration.model.isEmpty ? "tts-1" : configuration.model,
-                    "input": content,
-                    "response_format": "wav",
-                ]
                 let voice = configuration.voice.trimmingCharacters(in: .whitespaces)
-                if !voice.isEmpty { body["voice"] = voice }
+                var body: [String: Any]
+                switch configuration.apiStyle {
+                case .openAI:
+                    body = [
+                        "model": configuration.model.isEmpty ? "tts-1" : configuration.model,
+                        "input": content,
+                        "response_format": "wav",
+                    ]
+                    if !voice.isEmpty { body["voice"] = voice }
+                case .fishSpeech:
+                    body = [
+                        "text": content,
+                        "format": "wav",
+                        "streaming": false,
+                    ]
+                    if !voice.isEmpty { body["reference_id"] = voice }
+                }
                 request.httpBody = try JSONSerialization.data(withJSONObject: body)
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {

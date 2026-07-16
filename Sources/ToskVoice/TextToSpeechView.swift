@@ -97,6 +97,16 @@ private struct TextToSpeechView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
                 GridRow {
+                    Text("API")
+                    Picker("", selection: apiStyleBinding) {
+                        ForEach(TTSServerAPIStyle.allCases) { style in
+                            Text(style.label).tag(style)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 240, alignment: .leading)
+                }
+                GridRow {
                     Text("Server URL")
                     TextField("http://localhost:8000 or https://gpu-box:8020/v1", text: serverBinding(\.baseURL))
                         .textFieldStyle(.roundedBorder)
@@ -172,6 +182,13 @@ private struct TextToSpeechView: View {
         case .running: .green
         case .failed: .red
         }
+    }
+
+    private var apiStyleBinding: Binding<TTSServerAPIStyle> {
+        Binding(
+            get: { preferences.ttsServer.apiStyle },
+            set: { preferences.ttsServer.apiStyle = $0 }
+        )
     }
 
     private func serverBinding(_ keyPath: WritableKeyPath<TTSServerConfiguration, String>) -> Binding<String> {

@@ -79,14 +79,46 @@ enum OverlayPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
 /// An OpenAI-compatible speech endpoint (`POST …/v1/audio/speech`) serving
 /// models such as XTTS v2 (xtts-api-server, openedai-speech) or Fish-Speech.
 /// Precision (FP8/FP16) is a launch option of that server, not of the client.
+enum TTSServerAPIStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// POST /v1/audio/speech with {model, input, voice} — openedai-speech,
+    /// xtts-api-server wrappers, mlx-audio, OpenAI, …
+    case openAI
+    /// POST /v1/tts with {text, format, reference_id} — Fish-Speech's stock
+    /// api_server, which does not implement the OpenAI route.
+    case fishSpeech
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .openAI: "OpenAI-compatible"
+        case .fishSpeech: "Fish-Speech native"
+        }
+    }
+}
+
 struct TTSServerConfiguration: Codable, Equatable, Sendable {
     var baseURL: String = ""
+    var apiStyle: TTSServerAPIStyle = .openAI
     var model: String = "tts-1"
     var voice: String = ""
     var apiKey: String = ""
     /// Shell command that launches a local server for this endpoint
     /// (managed-server mode); empty when the server is managed externally.
     var managedCommand: String = ""
+
+    init() {}
+
+    /// Tolerant decoding so preferences saved by older builds (without newer
+    /// fields such as apiStyle) keep loading.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        apiStyle = try container.decodeIfPresent(TTSServerAPIStyle.self, forKey: .apiStyle) ?? .openAI
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? "tts-1"
+        voice = try container.decodeIfPresent(String.self, forKey: .voice) ?? ""
+        apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        managedCommand = try container.decodeIfPresent(String.self, forKey: .managedCommand) ?? ""
+    }
 
     var isConfigured: Bool { !baseURL.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -106,9 +138,10 @@ struct TTSServerConfiguration: Codable, Equatable, Sendable {
         guard !base.isEmpty else { return nil }
         if !base.contains("://") { base = "http://" + base }
         while base.hasSuffix("/") { base.removeLast() }
-        if base.hasSuffix("/audio/speech") { return URL(string: base) }
-        if base.hasSuffix("/v1") { return URL(string: base + "/audio/speech") }
-        return URL(string: base + "/v1/audio/speech")
+        let path = apiStyle == .fishSpeech ? "/tts" : "/audio/speech"
+        if base.hasSuffix(path) { return URL(string: base) }
+        if base.hasSuffix("/v1") { return URL(string: base + path) }
+        return URL(string: base + "/v1" + path)
     }
 }
 
