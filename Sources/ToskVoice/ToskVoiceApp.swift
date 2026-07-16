@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var serviceProvider: TextServiceProvider!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installMainMenu()
         let preferences = PreferencesStore()
         let history = HistoryStore()
         let modelPacks = ModelPackController()
@@ -66,6 +67,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         shortcutManager?.stop()
+    }
+
+    /// Accessory apps have no main menu, so ⌘V/⌘C/⌘X/⌘A, ⌘W, and ⌘Q key
+    /// equivalents never fire in our windows. Install a hidden main menu:
+    /// a standard Edit menu enables the clipboard shortcuts, and both ⌘W
+    /// and ⌘Q close the key window — quitting stays in the status menu.
+    private func installMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        let closeViaQ = NSMenuItem(title: "Close Window", action: #selector(closeKeyWindow), keyEquivalent: "q")
+        closeViaQ.target = self
+        appMenu.addItem(closeViaQ)
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redo)
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        let windowMenuItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    /// ⌘Q closes the key window instead of quitting the menu-bar app;
+    /// Quit ToskVoice lives in the status-item menu.
+    @objc private func closeKeyWindow() {
+        NSApp.keyWindow?.performClose(nil)
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
