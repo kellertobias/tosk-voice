@@ -58,13 +58,16 @@ enum TTSServerPreset: String, CaseIterable, Identifiable {
     func configuration(autoStart: Bool) -> TTSServerConfiguration {
         var config = TTSServerConfiguration()
         config.autoStart = autoStart
+        config.mode = .local
         switch self {
         case .fishSpeech:
+            config.engine = .fish
             config.apiStyle = .fishSpeech
             config.baseURL = "http://127.0.0.1:8080"
             config.model = ""
             config.managedCommand = #"cd "$HOME/src/fish-speech" && uv run tools/api_server.py --listen 127.0.0.1:8080 --llama-checkpoint-path checkpoints/openaudio-s1-mini --decoder-checkpoint-path checkpoints/openaudio-s1-mini/codec.pth --decoder-config-name modded_dac_vq --half"#
         case .xtts:
+            config.engine = .xtts
             config.apiStyle = .openAI
             config.baseURL = "http://127.0.0.1:8000"
             config.model = "tts-1-hd"

@@ -4,9 +4,16 @@ import AVFoundation
 import Foundation
 import TTSKit
 
+enum TTSEngineChoice: Hashable {
+    case system
+    case neural
+    case server
+}
+
 @MainActor
 final class TextToSpeechController: ObservableObject {
     @Published var text = ""
+    @Published var engineChoice: TTSEngineChoice = .system
     @Published var selectedVoiceIdentifier = AVSpeechSynthesisVoice(language: "en-US")?.identifier ?? ""
     @Published var rate: Double = 0.5
     @Published var status = "Ready"
@@ -58,6 +65,15 @@ final class TextToSpeechController: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do { text = try String(contentsOf: url, encoding: .utf8) }
         catch { status = error.localizedDescription }
+    }
+
+    /// Plays with the engine selected in the model dropdown.
+    func play() {
+        switch engineChoice {
+        case .system: speakSystem()
+        case .neural: speakNeural()
+        case .server: speakServer()
+        }
     }
 
     func speakSystem() {
@@ -128,40 +144,7 @@ final class TextToSpeechController: ObservableObject {
         neuralTask = Task { [weak self] in
             do {
                 guard let self else { return }
-                guard await ensureManagedServer(configuration) else {
-                    isSpeaking = false
-                    return
-                }
-                var request = URLRequest(url: endpoint)
-                request.httpMethod = "POST"
-                request.timeoutInterval = 300
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                let key = configuration.apiKey.trimmingCharacters(in: .whitespaces)
-                if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
-                let voice = configuration.voice.trimmingCharacters(in: .whitespaces)
-                var body: [String: Any]
-                switch configuration.apiStyle {
-                case .openAI:
-                    body = [
-                        "model": configuration.model.isEmpty ? "tts-1" : configuration.model,
-                        "input": content,
-                        "response_format": "wav",
-                    ]
-                    if !voice.isEmpty { body["voice"] = voice }
-                case .fishSpeech:
-                    body = [
-                        "text": content,
-                        "format": "wav",
-                        "streaming": false,
-                    ]
-                    if !voice.isEmpty { body["reference_id"] = voice }
-                }
-                request.httpBody = try JSONSerialization.data(withJSONObject: body)
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                    let detail = String(data: data.prefix(300), encoding: .utf8) ?? ""
-                    throw TTSError.audioOutputFailed("The TTS server answered with an error: \(detail)")
-                }
+                let data = try await serverAudio(for: content, configuration: configuration, endpoint: endpoint)
                 let temporary = FileManager.default.temporaryDirectory
                     .appendingPathComponent(UUID().uuidString)
                     .appendingPathExtension("wav")
@@ -173,6 +156,45 @@ final class TextToSpeechController: ObservableObject {
                 self?.status = error.localizedDescription
             }
         }
+    }
+
+    /// Requests synthesized WAV audio from the configured server, starting
+    /// the managed server first when needed.
+    private func serverAudio(for content: String, configuration: TTSServerConfiguration, endpoint: URL) async throws -> Data {
+        guard await ensureManagedServer(configuration) else {
+            throw TTSError.audioOutputFailed(managedServer.state.label)
+        }
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 300
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let key = configuration.apiKey.trimmingCharacters(in: .whitespaces)
+        if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+        let voice = configuration.voice.trimmingCharacters(in: .whitespaces)
+        var body: [String: Any]
+        switch configuration.apiStyle {
+        case .openAI:
+            body = [
+                "model": configuration.model.isEmpty ? "tts-1" : configuration.model,
+                "input": content,
+                "response_format": "wav",
+            ]
+            if !voice.isEmpty { body["voice"] = voice }
+        case .fishSpeech:
+            body = [
+                "text": content,
+                "format": "wav",
+                "streaming": false,
+            ]
+            if !voice.isEmpty { body["reference_id"] = voice }
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let detail = String(data: data.prefix(300), encoding: .utf8) ?? ""
+            throw TTSError.audioOutputFailed("The TTS server answered with an error: \(detail)")
+        }
+        return data
     }
 
     /// Installs a server preset and, on success, applies its configuration
@@ -227,19 +249,16 @@ final class TextToSpeechController: ObservableObject {
         status = "Ready"
     }
 
-    func exportSystemAudio() {
+    /// Exports the current text as MP3 or WAV with the selected engine.
+    func exportAudio() {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "ToskVoice.mp3"
         panel.allowedContentTypes = [.mp3, .wav]
         guard panel.runModal() == .OK, let destination = panel.url else { return }
-        let sourceText = text
-        let voice = selectedVoiceIdentifier
-        let speechRate = rate
         status = "Generating audio…"
         Task {
             do {
-                let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
-                try await writeSystemSpeech(sourceText, voice: voice, rate: speechRate, to: temporary)
+                let temporary = try await renderWav()
                 if destination.pathExtension.lowercased() == "mp3" {
                     try encodeMP3(wav: temporary, destination: destination)
                 } else {
@@ -252,6 +271,54 @@ final class TextToSpeechController: ObservableObject {
                 status = error.localizedDescription
             }
         }
+    }
+
+    /// Synthesizes the current text with the selected engine into a
+    /// temporary WAV file.
+    private func renderWav() async throws -> URL {
+        let content = text
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw TTSError.audioOutputFailed("Enter some text first.")
+        }
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("wav")
+        switch engineChoice {
+        case .system:
+            try await writeSystemSpeech(content, voice: selectedVoiceIdentifier, rate: rate, to: temporary)
+        case .neural:
+            let kit = try await modelPacks.prepareNeuralVoice()
+            let languageCode = voices.first(where: { $0.identifier == selectedVoiceIdentifier })?.language ?? "en"
+            let language = languageCode.hasPrefix("de") ? "german" : "english"
+            let result = try await kit.generate(text: content, voice: nil, language: language)
+            try Self.writeWav(samples: result.audio, sampleRate: result.sampleRate, to: temporary)
+        case .server:
+            let configuration = preferences.ttsServer
+            guard let endpoint = configuration.speechEndpoint else {
+                throw TTSError.audioOutputFailed("Configure the TTS server in Settings → Models first.")
+            }
+            let data = try await serverAudio(for: content, configuration: configuration, endpoint: endpoint)
+            try data.write(to: temporary)
+        }
+        return temporary
+    }
+
+    private static func writeWav(samples: [Float], sampleRate: Int, to url: URL) throws {
+        guard !samples.isEmpty,
+              let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(sampleRate), channels: 1, interleaved: false),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
+              let channel = buffer.floatChannelData?.pointee else {
+            throw TTSError.audioOutputFailed("The generated audio buffer was invalid.")
+        }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        channel.update(from: samples, count: samples.count)
+        let file = try AVAudioFile(
+            forWriting: url,
+            settings: format.settings,
+            commonFormat: .pcmFormatFloat32,
+            interleaved: false
+        )
+        try file.write(from: buffer)
     }
 
     private func writeSystemSpeech(_ text: String, voice: String, rate: Double, to url: URL) async throws {

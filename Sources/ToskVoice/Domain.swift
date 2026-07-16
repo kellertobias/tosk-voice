@@ -96,7 +96,44 @@ enum TTSServerAPIStyle: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum TTSServerMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case off
+    case local
+    case remote
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .off: "Off"
+        case .local: "Local (managed by ToskVoice)"
+        case .remote: "Remote server"
+        }
+    }
+}
+
+enum TTSServerEngine: String, Codable, CaseIterable, Identifiable, Sendable {
+    case fish
+    case xtts
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .fish: "Fish"
+        case .xtts: "XTTS"
+        }
+    }
+
+    var apiStyle: TTSServerAPIStyle {
+        switch self {
+        case .fish: .fishSpeech
+        case .xtts: .openAI
+        }
+    }
+}
+
 struct TTSServerConfiguration: Codable, Equatable, Sendable {
+    var mode: TTSServerMode = .off
+    var engine: TTSServerEngine = .fish
     var baseURL: String = ""
     var apiStyle: TTSServerAPIStyle = .openAI
     var model: String = "tts-1"
@@ -114,6 +151,8 @@ struct TTSServerConfiguration: Codable, Equatable, Sendable {
     /// fields such as apiStyle) keep loading.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decodeIfPresent(TTSServerMode.self, forKey: .mode) ?? .off
+        engine = try container.decodeIfPresent(TTSServerEngine.self, forKey: .engine) ?? .fish
         baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
         apiStyle = try container.decodeIfPresent(TTSServerAPIStyle.self, forKey: .apiStyle) ?? .openAI
         model = try container.decodeIfPresent(String.self, forKey: .model) ?? "tts-1"
@@ -124,6 +163,14 @@ struct TTSServerConfiguration: Codable, Equatable, Sendable {
     }
 
     var isConfigured: Bool { !baseURL.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// True when the server engine can be offered in the TTS window.
+    var isUsable: Bool { mode != .off && isConfigured }
+
+    /// Dropdown label in the TTS window, e.g. "Fish (local)" or "XTTS (Server)".
+    var displayName: String {
+        "\(engine.label) (\(mode == .local ? "local" : "Server"))"
+    }
 
     /// Root URL used to detect that the (managed) server is accepting
     /// connections; any HTTP response counts.

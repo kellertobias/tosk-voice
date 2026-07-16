@@ -4,7 +4,7 @@ import SwiftUI
 @MainActor
 final class TextToSpeechWindowController {
     private var window: NSWindow?
-    private let controller: TextToSpeechController
+    let controller: TextToSpeechController
 
     init(modelPacks: ModelPackController, preferences: PreferencesStore) {
         controller = TextToSpeechController(modelPacks: modelPacks, preferences: preferences)
@@ -31,9 +31,7 @@ final class TextToSpeechWindowController {
         }
         let hosting = NSHostingController(rootView: TextToSpeechView(
             controller: controller,
-            preferences: controller.preferences,
-            managed: controller.managedServer,
-            installer: controller.installer
+            preferences: controller.preferences
         ))
         let window = NSWindow(contentViewController: hosting)
         window.title = "ToskVoice — Text to Speech"
@@ -51,8 +49,6 @@ final class TextToSpeechWindowController {
 private struct TextToSpeechView: View {
     @ObservedObject var controller: TextToSpeechController
     @ObservedObject var preferences: PreferencesStore
-    @ObservedObject var managed: ManagedTTSServer
-    @ObservedObject var installer: TTSServerInstaller
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -67,197 +63,54 @@ private struct TextToSpeechView: View {
                 .padding(10)
                 .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
             HStack {
-                Picker("Voice", selection: $controller.selectedVoiceIdentifier) {
-                    ForEach(controller.voices, id: \.identifier) { voice in
-                        Text("\(voice.name) — \(voice.language)").tag(voice.identifier)
+                Picker("Model", selection: $controller.engineChoice) {
+                    Text("macOS Voice").tag(TTSEngineChoice.system)
+                    Text("Qwen3 Neural").tag(TTSEngineChoice.neural)
+                    if preferences.ttsServer.isUsable {
+                        Text(preferences.ttsServer.displayName).tag(TTSEngineChoice.server)
                     }
                 }
-                Slider(value: $controller.rate, in: 0.25...0.65) { Text("Rate") }
-                    .frame(width: 150)
+                .frame(maxWidth: 280)
+                voiceControls
             }
             HStack {
-                Button(controller.isSpeaking ? "Stop" : "Speak") {
-                    controller.isSpeaking ? controller.stop() : controller.speakSystem()
+                Button(controller.isSpeaking ? "Stop" : "Play") {
+                    controller.isSpeaking ? controller.stop() : controller.play()
                 }
                 .buttonStyle(.borderedProminent)
-                Button("Neural Voice") { controller.speakNeural() }
-                Button("Server Voice") { controller.speakServer() }
-                    .disabled(!preferences.ttsServer.isConfigured)
-                    .help("Speak through the configured OpenAI-compatible TTS server (XTTS v2, Fish-Speech, …)")
-                Button("Export WAV or MP3…") { controller.exportSystemAudio() }
+                Button("Generate MP3…") { controller.exportAudio() }
                 Spacer()
             }
-            DisclosureGroup("TTS Server (XTTS v2, Fish-Speech, …)") {
-                serverConfiguration
-            }
-            .font(.callout)
         }
         .padding(22)
         .frame(minWidth: 620, minHeight: 440)
-    }
-
-    private var serverConfiguration: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Any OpenAI-compatible speech endpoint works: xtts-api-server or openedai-speech for XTTS v2, Fish-Speech's API server, and similar. Run the server with your preferred precision (FP16 locally, FP8 on CUDA hardware) — the app just sends the text.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
-                GridRow {
-                    Text("API")
-                    Picker("", selection: apiStyleBinding) {
-                        ForEach(TTSServerAPIStyle.allCases) { style in
-                            Text(style.label).tag(style)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: 240, alignment: .leading)
-                }
-                GridRow {
-                    Text("Server URL")
-                    TextField("http://localhost:8000 or https://gpu-box:8020/v1", text: serverBinding(\.baseURL))
-                        .textFieldStyle(.roundedBorder)
-                }
-                GridRow {
-                    Text("Model")
-                    TextField("tts-1, xtts-v2, fish-speech-1.5…", text: serverBinding(\.model))
-                        .textFieldStyle(.roundedBorder)
-                }
-                GridRow {
-                    Text("Voice")
-                    TextField("Voice or reference speaker name (optional)", text: serverBinding(\.voice))
-                        .textFieldStyle(.roundedBorder)
-                }
-                GridRow {
-                    Text("API Key")
-                    SecureField("Optional", text: serverBinding(\.apiKey))
-                        .textFieldStyle(.roundedBorder)
-                }
+        .onChange(of: preferences.ttsServer.isUsable) {
+            if !preferences.ttsServer.isUsable, controller.engineChoice == .server {
+                controller.engineChoice = .system
             }
-            Divider().padding(.vertical, 4)
-            setupSection
-            Divider().padding(.vertical, 4)
-            managedServerSection
         }
-        .padding(.top, 6)
     }
 
     @ViewBuilder
-    private var setupSection: some View {
-        HStack(spacing: 8) {
-            Text("One-click setup:")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ForEach(TTSServerPreset.allCases) { preset in
-                Button("Set Up \(preset.label)…") { confirmSetup(preset) }
-                    .disabled(installer.state.isRunning || managed.isRunning)
-            }
-            if installer.state.isRunning {
-                ProgressView().controlSize(.small)
-                Button("Cancel") { installer.cancel() }
-            }
-            Spacer()
-        }
-        if installer.state != .idle {
-            HStack(spacing: 6) {
-                Text(installer.state.label)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                Spacer()
-                if installer.state.isRunning, let lastLine = installer.recentOutput.last {
-                    Text(lastLine)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.head)
+    private var voiceControls: some View {
+        switch controller.engineChoice {
+        case .system, .neural:
+            Picker("Voice", selection: $controller.selectedVoiceIdentifier) {
+                ForEach(controller.voices, id: \.identifier) { voice in
+                    Text("\(voice.name) — \(voice.language)").tag(voice.identifier)
                 }
             }
-        }
-    }
-
-    private func confirmSetup(_ preset: TTSServerPreset) {
-        let alert = NSAlert()
-        alert.messageText = "Set up \(preset.label)?"
-        alert.informativeText = preset.summary + "\n\nOn success, the server settings above are configured automatically."
-        alert.addButton(withTitle: "Install")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        controller.setUpServer(preset)
-    }
-
-    @ViewBuilder
-    private var managedServerSection: some View {
-        Text("Managed server: ToskVoice launches this command (login shell, so uv/uvx work), waits until the URL above answers, and stops it on quit. Example: cd ~/src/fish-speech && uv run tools/api_server.py --listen 127.0.0.1:8080 --half")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        HStack(spacing: 8) {
-            TextField("Launch command (leave empty to manage the server yourself)", text: serverBinding(\.managedCommand))
-                .textFieldStyle(.roundedBorder)
-                .font(.caption.monospaced())
-                .disabled(managed.isRunning)
-            Button(managed.isRunning ? "Stop Server" : "Start Server") {
-                if managed.isRunning {
-                    managed.stop()
-                } else {
-                    managed.start(
-                        command: preferences.ttsServer.managedCommand,
-                        healthURL: preferences.ttsServer.healthProbeURL
-                    )
-                }
+            if controller.engineChoice == .system {
+                Slider(value: $controller.rate, in: 0.25...0.65) { Text("Rate") }
+                    .frame(width: 150)
             }
-            .disabled(!managed.isRunning && preferences.ttsServer.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty)
+        case .server:
+            TextField("Voice / reference ID (optional)", text: Binding(
+                get: { preferences.ttsServer.voice },
+                set: { preferences.ttsServer.voice = $0 }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .frame(maxWidth: 280)
         }
-        Toggle("Start the server automatically when ToskVoice launches", isOn: autoStartBinding)
-            .font(.caption)
-            .disabled(preferences.ttsServer.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty)
-        HStack(spacing: 6) {
-            Circle()
-                .fill(managedTintColor(managed.state))
-                .frame(width: 8, height: 8)
-            Text(managed.state.label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer()
-            if let lastLine = managed.recentOutput.last {
-                Text(lastLine)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-            }
-        }
-    }
-
-    private func managedTintColor(_ state: ManagedTTSServer.State) -> Color {
-        switch state {
-        case .stopped: .gray
-        case .starting: .yellow
-        case .running: .green
-        case .failed: .red
-        }
-    }
-
-    private var autoStartBinding: Binding<Bool> {
-        Binding(
-            get: { preferences.ttsServer.autoStart },
-            set: { preferences.ttsServer.autoStart = $0 }
-        )
-    }
-
-    private var apiStyleBinding: Binding<TTSServerAPIStyle> {
-        Binding(
-            get: { preferences.ttsServer.apiStyle },
-            set: { preferences.ttsServer.apiStyle = $0 }
-        )
-    }
-
-    private func serverBinding(_ keyPath: WritableKeyPath<TTSServerConfiguration, String>) -> Binding<String> {
-        Binding(
-            get: { preferences.ttsServer[keyPath: keyPath] },
-            set: { preferences.ttsServer[keyPath: keyPath] = $0 }
-        )
     }
 }

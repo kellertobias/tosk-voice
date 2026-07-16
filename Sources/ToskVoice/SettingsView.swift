@@ -37,6 +37,7 @@ final class SettingsWindowController {
     private var window: NSWindow?
     private let navigation = SettingsNavigation()
     private let model: AppModel
+    private let ttsController: TextToSpeechController
     private let showTextToSpeech: @MainActor () -> Void
     private let showVoiceEditor: @MainActor () -> Void
     private let installObsidianCompanion: @MainActor () -> Void
@@ -44,12 +45,14 @@ final class SettingsWindowController {
 
     init(
         model: AppModel,
+        ttsController: TextToSpeechController,
         showTextToSpeech: @escaping @MainActor () -> Void,
         showVoiceEditor: @escaping @MainActor () -> Void,
         installObsidianCompanion: @escaping @MainActor () -> Void,
         copyZedConfiguration: @escaping @MainActor () -> Void
     ) {
         self.model = model
+        self.ttsController = ttsController
         self.showTextToSpeech = showTextToSpeech
         self.showVoiceEditor = showVoiceEditor
         self.installObsidianCompanion = installObsidianCompanion
@@ -67,6 +70,7 @@ final class SettingsWindowController {
         }
         let view = SettingsView(
             model: model,
+            ttsController: ttsController,
             navigation: navigation,
             showTextToSpeech: showTextToSpeech,
             showVoiceEditor: showVoiceEditor,
@@ -103,6 +107,7 @@ private final class SettingsWindow: NSWindow {
 
 private struct SettingsView: View {
     @ObservedObject var model: AppModel
+    let ttsController: TextToSpeechController
     @ObservedObject var navigation: SettingsNavigation
     @ObservedObject private var preferences: PreferencesStore
     @ObservedObject private var modelPacks: ModelPackController
@@ -114,6 +119,7 @@ private struct SettingsView: View {
 
     init(
         model: AppModel,
+        ttsController: TextToSpeechController,
         navigation: SettingsNavigation,
         showTextToSpeech: @escaping @MainActor () -> Void,
         showVoiceEditor: @escaping @MainActor () -> Void,
@@ -121,6 +127,7 @@ private struct SettingsView: View {
         copyZedConfiguration: @escaping @MainActor () -> Void
     ) {
         self.model = model
+        self.ttsController = ttsController
         self.navigation = navigation
         self.showTextToSpeech = showTextToSpeech
         self.showVoiceEditor = showVoiceEditor
@@ -248,6 +255,12 @@ private struct SettingsView: View {
                 Text("macOS voices are managed by the system. The optional neural voice downloads from the Argmax model repository.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            TTSServerSettingsSection(
+                preferences: preferences,
+                managed: ttsController.managedServer,
+                installer: ttsController.installer,
+                controller: ttsController
+            )
         }
         .formStyle(.grouped)
     }
@@ -471,5 +484,131 @@ private struct ProfileEditor: View {
             profile.wrappedValue.markdownBookmark = data
             profile.wrappedValue.markdownDisplayPath = url.path
         }
+    }
+}
+
+/// Settings → Models section for the optional TTS server: choose off /
+/// local (installed and managed by ToskVoice) / remote, pick the engine,
+/// install a local server, and control auto-start. The TTS window itself
+/// only selects the model and voice.
+private struct TTSServerSettingsSection: View {
+    @ObservedObject var preferences: PreferencesStore
+    @ObservedObject var managed: ManagedTTSServer
+    @ObservedObject var installer: TTSServerInstaller
+    let controller: TextToSpeechController
+
+    var body: some View {
+        Section("TTS Server (Fish-Speech / XTTS)") {
+            Picker("Mode", selection: binding(\.mode)) {
+                ForEach(TTSServerMode.allCases) { Text($0.label).tag($0) }
+            }
+            .onChange(of: preferences.ttsServer.mode) { applyEngineDefaults() }
+
+            if preferences.ttsServer.mode != .off {
+                Picker("Engine", selection: binding(\.engine)) {
+                    Text("Fish-Speech").tag(TTSServerEngine.fish)
+                    Text("XTTS v2").tag(TTSServerEngine.xtts)
+                }
+                .onChange(of: preferences.ttsServer.engine) { applyEngineDefaults() }
+            }
+
+            if preferences.ttsServer.mode == .local {
+                localControls
+            } else if preferences.ttsServer.mode == .remote {
+                remoteControls
+            }
+
+            if preferences.ttsServer.mode != .off {
+                Text("The engine appears in the Text to Speech window as \"\(preferences.ttsServer.displayName)\".")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var localControls: some View {
+        let preset: TTSServerPreset = preferences.ttsServer.engine == .fish ? .fishSpeech : .xtts
+        HStack {
+            Button("Install \(preset.label)…") { confirmInstall(preset) }
+                .disabled(installer.state.isRunning || managed.isRunning)
+            if installer.state.isRunning {
+                ProgressView().controlSize(.small)
+                Button("Cancel") { installer.cancel() }
+            }
+            Spacer()
+            Button(managed.isRunning ? "Stop Server" : "Start Server") {
+                if managed.isRunning {
+                    managed.stop()
+                } else {
+                    managed.start(
+                        command: preferences.ttsServer.managedCommand,
+                        healthURL: preferences.ttsServer.healthProbeURL
+                    )
+                }
+            }
+            .disabled(preferences.ttsServer.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        if installer.state != .idle {
+            Text(installer.state.label).font(.caption).foregroundStyle(.secondary)
+            if installer.state.isRunning, let line = installer.recentOutput.last {
+                Text(line).font(.caption2.monospaced()).foregroundStyle(.tertiary)
+                    .lineLimit(1).truncationMode(.head)
+            }
+        }
+        Toggle("Start the server automatically when ToskVoice launches", isOn: binding(\.autoStart))
+            .disabled(preferences.ttsServer.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty)
+        LabeledContent("Server status", value: managed.state.label)
+            .font(.caption)
+    }
+
+    @ViewBuilder
+    private var remoteControls: some View {
+        TextField("Server URL", text: binding(\.baseURL), prompt: Text("https://gpu-box:8080 or …/v1"))
+        if preferences.ttsServer.engine == .xtts {
+            TextField("Model", text: binding(\.model), prompt: Text("tts-1-hd"))
+        }
+        SecureField("API Key (optional)", text: binding(\.apiKey))
+        Text("Run the server with your preferred precision (FP16, or FP8 on CUDA hardware) — ToskVoice just sends the text.")
+            .font(.caption).foregroundStyle(.secondary)
+    }
+
+    private func confirmInstall(_ preset: TTSServerPreset) {
+        let alert = NSAlert()
+        alert.messageText = "Install \(preset.label)?"
+        alert.informativeText = preset.summary + "\n\nOn success, the server is configured automatically."
+        alert.addButton(withTitle: "Install")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        controller.setUpServer(preset)
+    }
+
+    /// Applies engine-appropriate defaults after a mode or engine change.
+    private func applyEngineDefaults() {
+        var config = preferences.ttsServer
+        guard config.mode != .off else { return }
+        config.apiStyle = config.engine.apiStyle
+        switch config.mode {
+        case .local:
+            let preset: TTSServerPreset = config.engine == .fish ? .fishSpeech : .xtts
+            let defaults = preset.configuration(autoStart: config.autoStart)
+            config.baseURL = defaults.baseURL
+            config.model = defaults.model
+            config.managedCommand = defaults.managedCommand
+            config.apiStyle = defaults.apiStyle
+        case .remote:
+            config.managedCommand = ""
+            config.autoStart = false
+            if config.engine == .xtts, config.model.isEmpty { config.model = "tts-1-hd" }
+        case .off:
+            break
+        }
+        preferences.ttsServer = config
+    }
+
+    private func binding<Value>(_ keyPath: WritableKeyPath<TTSServerConfiguration, Value>) -> Binding<Value> {
+        Binding(
+            get: { preferences.ttsServer[keyPath: keyPath] },
+            set: { preferences.ttsServer[keyPath: keyPath] = $0 }
+        )
     }
 }

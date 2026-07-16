@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let meeting = MeetingWindowController(preferences: preferences, modelPacks: modelPacks) { appModel.profile }
         let settings = SettingsWindowController(
             model: model,
+            ttsController: textToSpeech.controller,
             showTextToSpeech: { textToSpeech.show() },
             showVoiceEditor: { voiceEditorWindow.show() },
             installObsidianCompanion: { voiceEditorWindow.installObsidianCompanion() },
