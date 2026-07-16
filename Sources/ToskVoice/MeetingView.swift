@@ -28,7 +28,7 @@ final class MeetingController: ObservableObject {
     @Published var isAnswering = false
 
     private(set) var sessionStart: Date?
-    private var savedSegmentCount = 0
+    private var isDirty = false
 
     private let session = MeetingSession()
     private let preferences: PreferencesStore
@@ -39,7 +39,12 @@ final class MeetingController: ObservableObject {
         self.profileProvider = profileProvider
     }
 
-    var hasUnsavedContent: Bool { segments.count > savedSegmentCount }
+    var hasUnsavedContent: Bool { isDirty && !segments.isEmpty }
+
+    func removeSegment(_ id: UUID) {
+        segments.removeAll { $0.id == id }
+        isDirty = true
+    }
 
     func refreshApps() {
         availableApps = SystemAudioTap.availableApps()
@@ -120,7 +125,7 @@ final class MeetingController: ObservableObject {
         if resetTranscript {
             segments = []
             qaEntries = []
-            savedSegmentCount = 0
+            isDirty = false
         }
         micVolatile = ""
         remoteVolatile = ""
@@ -145,6 +150,7 @@ final class MeetingController: ObservableObject {
                     onSegment: { [weak self] segment in
                         guard !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                         self?.segments.append(segment)
+                        self?.isDirty = true
                     },
                     onVolatile: { [weak self] speaker, text in
                         switch speaker {
@@ -217,7 +223,7 @@ final class MeetingController: ObservableObject {
         guard response == .OK, let url = panel.url else { return false }
         do {
             try transcriptMarkdown.write(to: url, atomically: true, encoding: .utf8)
-            savedSegmentCount = segments.count
+            isDirty = false
             status = "Saved to \(url.lastPathComponent)"
             return true
         } catch {
@@ -298,6 +304,7 @@ final class MeetingWindowController: NSObject, NSWindowDelegate {
     func show() {
         controller.refreshApps()
         if let window {
+            DockPresence.shared.track(window)
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
             return
@@ -311,6 +318,7 @@ final class MeetingWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         self.window = window
+        DockPresence.shared.track(window)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }
@@ -404,7 +412,8 @@ private struct MeetingView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(controller.segments) { segment in
-                            SegmentRow(segment: segment).id(segment.id)
+                            SegmentRow(segment: segment) { controller.removeSegment(segment.id) }
+                                .id(segment.id)
                         }
                         if !controller.remoteVolatile.isEmpty {
                             VolatileRow(speaker: .remote, text: controller.remoteVolatile)
@@ -582,6 +591,8 @@ private struct LevelMeter: View {
 
 private struct SegmentRow: View {
     let segment: MeetingSegment
+    let onDelete: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -592,6 +603,15 @@ private struct SegmentRow: View {
                 Text(segment.capturedAt, style: .time)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                Spacer()
+                if isHovered {
+                    Button(action: onDelete) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove this segment from the transcript")
+                }
             }
             Text(segment.text)
                 .font(.body)
@@ -599,6 +619,11 @@ private struct SegmentRow: View {
         }
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .contextMenu {
+            Button("Remove Segment", role: .destructive, action: onDelete)
+        }
     }
 }
 

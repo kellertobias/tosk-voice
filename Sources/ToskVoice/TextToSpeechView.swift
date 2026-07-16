@@ -19,6 +19,7 @@ final class TextToSpeechWindowController {
     func show() {
         controller.captureSelectionSource()
         if let window {
+            DockPresence.shared.track(window)
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
             return
@@ -31,6 +32,7 @@ final class TextToSpeechWindowController {
         window.center()
         window.isReleasedWhenClosed = false
         self.window = window
+        DockPresence.shared.track(window)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }
