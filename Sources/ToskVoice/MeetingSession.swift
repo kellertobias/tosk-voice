@@ -127,6 +127,18 @@ struct MeetingSegment: Identifiable, Sendable {
     let end: Float
 }
 
+/// Thread-safe flag the realtime audio handlers consult to drop buffers
+/// while the transcript is paused.
+final class PauseGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paused = false
+
+    var isPaused: Bool {
+        get { lock.withLock { paused } }
+        set { lock.withLock { paused = newValue } }
+    }
+}
+
 /// Runs a meeting-transcript session: the microphone lane captures the local
 /// speaker while a system audio process tap captures the remote participants,
 /// each feeding its own SpeechAnalyzer.
@@ -136,8 +148,14 @@ final class MeetingSession {
     private let remoteLane = MeetingTranscriptionLane()
     private let systemTap = SystemAudioTap()
     private var engine: AVAudioEngine?
+    private let pauseGate = PauseGate()
 
     var isRunning: Bool { engine != nil }
+
+    var isPaused: Bool {
+        get { pauseGate.isPaused }
+        set { pauseGate.isPaused = newValue }
+    }
 
     struct Callbacks {
         var onSegment: @MainActor (MeetingSegment) -> Void
@@ -175,7 +193,7 @@ final class MeetingSession {
                 },
                 onLevel: { level in callbacks.onLevel(.remote, level) }
             )
-            try systemTap.run(onBuffer: Self.makeTapBufferHandler(remoteHandler))
+            try systemTap.run(onBuffer: Self.makeTapBufferHandler(remoteHandler, gate: pauseGate))
         } catch {
             systemTap.stop()
             await remoteLane.cancel()
@@ -205,7 +223,7 @@ final class MeetingSession {
                 },
                 onLevel: { level in callbacks.onLevel(.me, level) }
             )
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: micFormat, block: micHandler)
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: micFormat, block: Self.makeGatedHandler(micHandler, gate: pauseGate))
             audioEngine.prepare()
             try audioEngine.start()
             engine = audioEngine
@@ -221,9 +239,23 @@ final class MeetingSession {
     /// Built by a nonisolated factory so the returned closure carries no
     /// actor isolation; Core Audio invokes it on its own realtime thread.
     private nonisolated static func makeTapBufferHandler(
-        _ handler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+        _ handler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void,
+        gate: PauseGate
     ) -> @Sendable (AVAudioPCMBuffer) -> Void {
-        { buffer in handler(buffer, AVAudioTime(hostTime: mach_absolute_time())) }
+        { buffer in
+            guard !gate.isPaused else { return }
+            handler(buffer, AVAudioTime(hostTime: mach_absolute_time()))
+        }
+    }
+
+    private nonisolated static func makeGatedHandler(
+        _ handler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void,
+        gate: PauseGate
+    ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
+        { buffer, time in
+            guard !gate.isPaused else { return }
+            handler(buffer, time)
+        }
     }
 
     func stop() async {
