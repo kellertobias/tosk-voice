@@ -608,6 +608,8 @@ private struct SegmentRow: View {
     let segment: MeetingSegment
     let onDelete: () -> Void
     @State private var isHovered = false
+    @State private var isArmed = false
+    @State private var disarmTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -619,13 +621,18 @@ private struct SegmentRow: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 Spacer()
-                if isHovered {
-                    Button(action: onDelete) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
+                if isHovered || isArmed {
+                    if isArmed {
+                        Text("Click again to remove")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
+                    Button(action: deleteTapped) {
+                        Image(systemName: isArmed ? "trash.circle.fill" : "xmark.circle.fill")
+                            .foregroundStyle(isArmed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
                     }
                     .buttonStyle(.plain)
-                    .help("Remove this segment from the transcript")
+                    .help(isArmed ? "Click again to remove this segment" : "Remove this segment (click twice)")
                 }
             }
             Text(segment.text)
@@ -635,10 +642,36 @@ private struct SegmentRow: View {
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            isHovered = hovering
+            if !hovering { disarm() }
+        }
         .contextMenu {
             Button("Remove Segment", role: .destructive, action: onDelete)
         }
+    }
+
+    /// First click arms the control for a few seconds; the second click
+    /// within that window removes the segment.
+    private func deleteTapped() {
+        if isArmed {
+            disarm()
+            onDelete()
+            return
+        }
+        isArmed = true
+        disarmTask?.cancel()
+        disarmTask = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            isArmed = false
+        }
+    }
+
+    private func disarm() {
+        disarmTask?.cancel()
+        disarmTask = nil
+        isArmed = false
     }
 }
 
