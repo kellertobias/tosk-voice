@@ -33,7 +33,7 @@ enum TTSServerPreset: String, CaseIterable, Identifiable {
             mkdir -p "$HOME/src"
             [ -d "$HOME/src/fish-speech" ] || git clone https://github.com/fishaudio/fish-speech "$HOME/src/fish-speech"
             cd "$HOME/src/fish-speech"
-            uv venv --python 3.12
+            [ -d .venv ] || uv venv --python 3.12
             uv pip install -e .
             uv pip install 'huggingface_hub[cli]'
             uv run huggingface-cli download fishaudio/openaudio-s1-mini --local-dir checkpoints/openaudio-s1-mini
