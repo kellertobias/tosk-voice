@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let voiceEditorWindow = VoiceEditorAgentWindowController(preferences: agentPreferences)
         voiceEditor = voiceEditorWindow
         let appModel = model!
-        let meeting = MeetingWindowController(preferences: preferences) { appModel.profile }
+        let meeting = MeetingWindowController(preferences: preferences, modelPacks: modelPacks) { appModel.profile }
         let settings = SettingsWindowController(
             model: model,
             showTextToSpeech: { textToSpeech.show() },

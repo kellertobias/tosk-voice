@@ -19,7 +19,8 @@ final class MeetingTranscriptionLane {
         glossary: [String],
         inputFormat: AVAudioFormat,
         onText: @escaping @MainActor (String, Bool, TimedUtterance?) -> Void,
-        onLevel: @escaping @MainActor @Sendable (Float) -> Void
+        onLevel: @escaping @MainActor @Sendable (Float) -> Void,
+        onAudio: (@MainActor @Sendable ([Float]) -> Void)? = nil
     ) async throws -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
         let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requestedLocale)
         guard let locale else { throw SpeechSessionError.unsupportedLocale(requestedLocale.identifier) }
@@ -81,8 +82,9 @@ final class MeetingTranscriptionLane {
             continuation: continuation,
             converter: converter,
             analysisFormat: analysisFormat
-        ) { @MainActor _, level in
+        ) { @MainActor samples, level in
             onLevel(level)
+            onAudio?(samples)
         }
         self.processor = processor
         return processor.makeHandler()
@@ -120,7 +122,9 @@ enum MeetingSpeaker: String, Sendable {
 
 struct MeetingSegment: Identifiable, Sendable {
     let id = UUID()
-    let speaker: MeetingSpeaker
+    let source: MeetingSpeaker
+    /// "Me", "Remote", or a diarized "Speaker N" once detection has run.
+    var speakerLabel: String
     var text: String
     let capturedAt: Date
     let start: Float
@@ -150,6 +154,9 @@ final class MeetingSession {
     private var engine: AVAudioEngine?
     private let pauseGate = PauseGate()
     private let micMuteGate = PauseGate()
+    /// Mono 16 kHz samples of the remote lane for this run, kept for
+    /// SpeakerKit diarization at stop.
+    private var remoteAudio: [Float] = []
 
     var isRunning: Bool { engine != nil }
 
@@ -180,6 +187,7 @@ final class MeetingSession {
 
         // Remote lane first: creating the tap triggers the one-time
         // "System Audio Recording" consent prompt and fails fast if denied.
+        remoteAudio = []
         do {
             let tapFormat = try systemTap.prepare(target: target)
             let remoteHandler = try await remoteLane.start(
@@ -190,14 +198,15 @@ final class MeetingSession {
                     if isFinal {
                         callbacks.onVolatile(.remote, "")
                         callbacks.onSegment(MeetingSegment(
-                            speaker: .remote, text: text, capturedAt: Date(),
+                            source: .remote, speakerLabel: MeetingSpeaker.remote.rawValue, text: text, capturedAt: Date(),
                             start: timing?.start ?? 0, end: timing?.end ?? 0
                         ))
                     } else {
                         callbacks.onVolatile(.remote, text)
                     }
                 },
-                onLevel: { level in callbacks.onLevel(.remote, level) }
+                onLevel: { level in callbacks.onLevel(.remote, level) },
+                onAudio: { [weak self] samples in self?.remoteAudio.append(contentsOf: samples) }
             )
             try systemTap.run(onBuffer: Self.makeTapBufferHandler(remoteHandler, gate: pauseGate))
         } catch {
@@ -220,7 +229,7 @@ final class MeetingSession {
                     if isFinal {
                         callbacks.onVolatile(.me, "")
                         callbacks.onSegment(MeetingSegment(
-                            speaker: .me, text: text, capturedAt: Date(),
+                            source: .me, speakerLabel: MeetingSpeaker.me.rawValue, text: text, capturedAt: Date(),
                             start: timing?.start ?? 0, end: timing?.end ?? 0
                         ))
                     } else {
@@ -264,12 +273,17 @@ final class MeetingSession {
         }
     }
 
-    func stop() async {
+    /// Stops both lanes and returns the remote lane's mono 16 kHz audio of
+    /// this run for diarization.
+    func stop() async -> [Float] {
         systemTap.stop()
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
         await remoteLane.finish()
         await micLane.finish()
+        let audio = remoteAudio
+        remoteAudio = []
+        return audio
     }
 }

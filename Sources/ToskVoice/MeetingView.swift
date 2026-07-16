@@ -25,19 +25,24 @@ final class MeetingController: ObservableObject {
     @Published var selectedBundleID: String?
     @Published var inputDevices: [AudioDevice] = []
     @Published var selectedInputUID: String?
+    @Published var detectSpeakers = true
     @Published var question = ""
     @Published var qaEntries: [MeetingQAEntry] = []
     @Published var isAnswering = false
 
     private(set) var sessionStart: Date?
     private var isDirty = false
+    private var runFirstSegmentIndex = 0
 
     private let session = MeetingSession()
+    private let speakerLabeler = SpeakerLabeler()
     private let preferences: PreferencesStore
+    private let modelPacks: ModelPackController
     private let profileProvider: @MainActor () -> DictationProfile
 
-    init(preferences: PreferencesStore, profileProvider: @escaping @MainActor () -> DictationProfile) {
+    init(preferences: PreferencesStore, modelPacks: ModelPackController, profileProvider: @escaping @MainActor () -> DictationProfile) {
         self.preferences = preferences
+        self.modelPacks = modelPacks
         self.profileProvider = profileProvider
         selectedInputUID = preferences.selectedInputUID
     }
@@ -139,6 +144,7 @@ final class MeetingController: ObservableObject {
         isPaused = false
         session.isPaused = false
         session.isMicMuted = isMicMuted
+        runFirstSegmentIndex = segments.count
         status = "Starting…"
         let profile = profileProvider()
         let target: SystemAudioTap.Target
@@ -186,7 +192,7 @@ final class MeetingController: ObservableObject {
     func stop() async {
         guard isRunning else { return }
         status = "Finishing…"
-        await session.stop()
+        let remoteAudio = await session.stop()
         isRunning = false
         isPaused = false
         micVolatile = ""
@@ -194,6 +200,30 @@ final class MeetingController: ObservableObject {
         micLevel = 0
         remoteLevel = 0
         status = "Ready"
+        await labelRemoteSpeakers(audio: remoteAudio)
+    }
+
+    /// Diarizes this run's remote audio with SpeakerKit and relabels the
+    /// run's Remote segments as "Speaker N".
+    private func labelRemoteSpeakers(audio: [Float]) async {
+        guard detectSpeakers, !audio.isEmpty else { return }
+        let indices = segments.indices.filter { $0 >= runFirstSegmentIndex && segments[$0].source == .remote }
+        guard !indices.isEmpty else { return }
+        status = "Detecting speakers…"
+        do {
+            let kit = try await modelPacks.prepareSpeakerKit()
+            let utterances = indices.map { index in
+                TimedUtterance(text: segments[index].text, start: segments[index].start, end: segments[index].end)
+            }
+            let labels = try await speakerLabeler.labels(audio: audio, utterances: utterances, using: kit)
+            for (position, index) in indices.enumerated() where position < labels.count {
+                if let label = labels[position] { segments[index].speakerLabel = label }
+            }
+            isDirty = true
+            status = "Ready"
+        } catch {
+            status = "Speaker detection failed: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Transcript export
@@ -201,7 +231,7 @@ final class MeetingController: ObservableObject {
     var transcriptMarkdown: String {
         let header = "# Meeting Transcript — \(Self.dateFormatter.string(from: sessionStart ?? Date()))\n"
         let body = segments.map { segment in
-            "**\(segment.speaker.rawValue)** (\(Self.timeFormatter.string(from: segment.capturedAt))): \(segment.text)"
+            "**\(segment.speakerLabel)** (\(Self.timeFormatter.string(from: segment.capturedAt))): \(segment.text)"
         }.joined(separator: "\n\n")
         return header + "\n" + body + "\n"
     }
@@ -266,8 +296,9 @@ final class MeetingController: ObservableObject {
         }
         let session = LanguageModelSession(instructions: """
         You answer questions about a meeting transcript. The transcript lists \
-        timestamped statements labeled with their speaker ("Me" is the local user, \
-        "Remote" covers the other participants). Answer only from the transcript; \
+        timestamped statements labeled with their speaker: "Me" is the local user, \
+        while "Remote" or "Speaker 1", "Speaker 2", … are the other participants. \
+        Answer only from the transcript; \
         say plainly when it does not contain the answer. Quote the relevant speaker \
         where helpful. Answer in the language of the question.
         """)
@@ -304,8 +335,8 @@ final class MeetingWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let controller: MeetingController
 
-    init(preferences: PreferencesStore, profileProvider: @escaping @MainActor () -> DictationProfile) {
-        controller = MeetingController(preferences: preferences, profileProvider: profileProvider)
+    init(preferences: PreferencesStore, modelPacks: ModelPackController, profileProvider: @escaping @MainActor () -> DictationProfile) {
+        controller = MeetingController(preferences: preferences, modelPacks: modelPacks, profileProvider: profileProvider)
     }
 
     func show() {
@@ -409,6 +440,9 @@ private struct MeetingView: View {
             .frame(maxWidth: 280)
             .disabled(controller.isRunning)
             Button("Refresh") { controller.refreshApps() }
+                .disabled(controller.isRunning)
+            Toggle("Detect Speakers", isOn: $controller.detectSpeakers)
+                .help("After stopping, label remote participants as Speaker 1, 2, 3… using the local SpeakerKit model.")
                 .disabled(controller.isRunning)
             Spacer()
             Text(controller.status).font(.caption).foregroundStyle(.secondary)
@@ -532,6 +566,18 @@ extension MeetingSpeaker {
     }
 }
 
+extension MeetingSegment {
+    private static let speakerPalette: [Color] = [.green, .orange, .purple, .pink, .teal, .indigo]
+
+    var tint: Color {
+        guard source == .remote else { return source.tint }
+        if let number = Int(speakerLabel.split(separator: " ").last ?? ""), number > 0 {
+            return Self.speakerPalette[(number - 1) % Self.speakerPalette.count]
+        }
+        return source.tint
+    }
+}
+
 /// A Time Machine-style timeline beside the transcript: each segment is a
 /// tick positioned by its capture time and colored by speaker. Clicking a
 /// tick jumps the transcript to that segment.
@@ -553,7 +599,7 @@ private struct TimelineRail: View {
                         ? segment.capturedAt.timeIntervalSince(start) / span
                         : 0
                     Capsule()
-                        .fill(segment.speaker.tint)
+                        .fill(segment.tint)
                         .frame(width: 14, height: 5)
                         .contentShape(Rectangle().inset(by: -4))
                         .position(
@@ -561,7 +607,7 @@ private struct TimelineRail: View {
                             y: 6 + CGFloat(fraction) * max(0, geometry.size.height - 12)
                         )
                         .onTapGesture { onJump(segment.id) }
-                        .help("\(segment.speaker.rawValue): \(String(segment.text.prefix(80)))")
+                        .help("\(segment.speakerLabel): \(String(segment.text.prefix(80)))")
                 }
             }
         }
@@ -614,9 +660,9 @@ private struct SegmentRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Text(segment.speaker.rawValue)
+                Text(segment.speakerLabel)
                     .font(.caption.bold())
-                    .foregroundStyle(segment.speaker.tint)
+                    .foregroundStyle(segment.tint)
                 Text(segment.capturedAt, style: .time)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
