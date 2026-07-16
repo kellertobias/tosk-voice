@@ -14,6 +14,7 @@ final class TextToSpeechController: ObservableObject {
 
     let modelPacks: ModelPackController
     let preferences: PreferencesStore
+    let managedServer = ManagedTTSServer()
     private let synthesizer = AVSpeechSynthesizer()
     private var neuralTask: Task<Void, Never>?
     private var playbackEngine: AVAudioEngine?
@@ -108,6 +109,75 @@ final class TextToSpeechController: ObservableObject {
                 self?.status = error.localizedDescription
             }
         }
+    }
+
+    /// Speaks through the configured OpenAI-compatible speech server
+    /// (XTTS v2, Fish-Speech, or any /v1/audio/speech implementation).
+    func speakServer() {
+        stop()
+        let content = text
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let configuration = preferences.ttsServer
+        guard let endpoint = configuration.speechEndpoint else {
+            status = "Configure the TTS server URL first"
+            return
+        }
+        isSpeaking = true
+        status = "Requesting server voice…"
+        neuralTask = Task { [weak self] in
+            do {
+                guard let self else { return }
+                guard await ensureManagedServer(configuration) else {
+                    isSpeaking = false
+                    return
+                }
+                var request = URLRequest(url: endpoint)
+                request.httpMethod = "POST"
+                request.timeoutInterval = 300
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                let key = configuration.apiKey.trimmingCharacters(in: .whitespaces)
+                if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+                var body: [String: Any] = [
+                    "model": configuration.model.isEmpty ? "tts-1" : configuration.model,
+                    "input": content,
+                    "response_format": "wav",
+                ]
+                let voice = configuration.voice.trimmingCharacters(in: .whitespaces)
+                if !voice.isEmpty { body["voice"] = voice }
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    let detail = String(data: data.prefix(300), encoding: .utf8) ?? ""
+                    throw TTSError.audioOutputFailed("The TTS server answered with an error: \(detail)")
+                }
+                let temporary = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("wav")
+                try data.write(to: temporary)
+                try play(file: temporary)
+                status = "Speaking with server voice"
+            } catch {
+                self?.isSpeaking = false
+                self?.status = error.localizedDescription
+            }
+        }
+    }
+
+    /// Launches the managed server when one is configured and waits until it
+    /// answers. Returns false (with a status message) when it cannot start.
+    private func ensureManagedServer(_ configuration: TTSServerConfiguration) async -> Bool {
+        guard !configuration.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty else { return true }
+        if managedServer.state == .running { return true }
+        if managedServer.state != .starting {
+            managedServer.start(command: configuration.managedCommand, healthURL: configuration.healthProbeURL)
+        }
+        status = "Starting managed TTS server…"
+        while managedServer.state == .starting, !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+        }
+        if managedServer.state == .running { return true }
+        status = managedServer.state.label
+        return false
     }
 
     func stop() {

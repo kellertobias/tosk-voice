@@ -9,6 +9,7 @@ final class PreferencesStore: ObservableObject {
     @Published var launchAtLogin: Bool { didSet { save() } }
     @Published var toggleShortcut: ToggleShortcutChoice { didSet { save() } }
     @Published var pushShortcut: PushShortcutChoice { didSet { save() } }
+    @Published var ttsServer: TTSServerConfiguration { didSet { save() } }
 
     private struct Snapshot: Codable {
         var profiles: [DictationProfile]
@@ -18,6 +19,7 @@ final class PreferencesStore: ObservableObject {
         var launchAtLogin: Bool
         var toggleShortcut: ToggleShortcutChoice?
         var pushShortcut: PushShortcutChoice?
+        var ttsServer: TTSServerConfiguration?
     }
 
     private let defaults = UserDefaults.standard
@@ -33,6 +35,7 @@ final class PreferencesStore: ObservableObject {
             launchAtLogin = snapshot.launchAtLogin
             toggleShortcut = snapshot.toggleShortcut ?? .controlOptionSpace
             pushShortcut = snapshot.pushShortcut ?? .controlOptionD
+            ttsServer = snapshot.ttsServer ?? TTSServerConfiguration()
         } else {
             let profile = DictationProfile.standard
             profiles = [profile]
@@ -42,6 +45,7 @@ final class PreferencesStore: ObservableObject {
             launchAtLogin = false
             toggleShortcut = .controlOptionSpace
             pushShortcut = .controlOptionD
+            ttsServer = TTSServerConfiguration()
         }
         isLoading = false
     }
@@ -79,7 +83,8 @@ final class PreferencesStore: ObservableObject {
             selectedInputUID: selectedInputUID, selectedOutputUID: selectedOutputUID,
             launchAtLogin: launchAtLogin,
             toggleShortcut: toggleShortcut,
-            pushShortcut: pushShortcut
+            pushShortcut: pushShortcut,
+            ttsServer: ttsServer
         )
         if let data = try? JSONEncoder().encode(snapshot) { defaults.set(data, forKey: key) }
     }

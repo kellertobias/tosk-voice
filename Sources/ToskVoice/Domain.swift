@@ -76,6 +76,42 @@ enum OverlayPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// An OpenAI-compatible speech endpoint (`POST …/v1/audio/speech`) serving
+/// models such as XTTS v2 (xtts-api-server, openedai-speech) or Fish-Speech.
+/// Precision (FP8/FP16) is a launch option of that server, not of the client.
+struct TTSServerConfiguration: Codable, Equatable, Sendable {
+    var baseURL: String = ""
+    var model: String = "tts-1"
+    var voice: String = ""
+    var apiKey: String = ""
+    /// Shell command that launches a local server for this endpoint
+    /// (managed-server mode); empty when the server is managed externally.
+    var managedCommand: String = ""
+
+    var isConfigured: Bool { !baseURL.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// Root URL used to detect that the (managed) server is accepting
+    /// connections; any HTTP response counts.
+    var healthProbeURL: URL? {
+        guard let endpoint = speechEndpoint,
+              let scheme = endpoint.scheme, let host = endpoint.host else { return nil }
+        var root = "\(scheme)://\(host)"
+        if let port = endpoint.port { root += ":\(port)" }
+        return URL(string: root + "/")
+    }
+
+    /// Accepts a bare host, a host with /v1, or a full endpoint path.
+    var speechEndpoint: URL? {
+        var base = baseURL.trimmingCharacters(in: .whitespaces)
+        guard !base.isEmpty else { return nil }
+        if !base.contains("://") { base = "http://" + base }
+        while base.hasSuffix("/") { base.removeLast() }
+        if base.hasSuffix("/audio/speech") { return URL(string: base) }
+        if base.hasSuffix("/v1") { return URL(string: base + "/audio/speech") }
+        return URL(string: base + "/v1/audio/speech")
+    }
+}
+
 enum DestinationKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case focusedField
     case markdown
