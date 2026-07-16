@@ -14,6 +14,7 @@ final class TextToSpeechController: ObservableObject {
 
     let modelPacks: ModelPackController
     let preferences: PreferencesStore
+    let managedServer = ManagedTTSServer()
     private let synthesizer = AVSpeechSynthesizer()
     private var neuralTask: Task<Void, Never>?
     private var playbackEngine: AVAudioEngine?
@@ -126,6 +127,10 @@ final class TextToSpeechController: ObservableObject {
         neuralTask = Task { [weak self] in
             do {
                 guard let self else { return }
+                guard await ensureManagedServer(configuration) else {
+                    isSpeaking = false
+                    return
+                }
                 var request = URLRequest(url: endpoint)
                 request.httpMethod = "POST"
                 request.timeoutInterval = 300
@@ -156,6 +161,23 @@ final class TextToSpeechController: ObservableObject {
                 self?.status = error.localizedDescription
             }
         }
+    }
+
+    /// Launches the managed server when one is configured and waits until it
+    /// answers. Returns false (with a status message) when it cannot start.
+    private func ensureManagedServer(_ configuration: TTSServerConfiguration) async -> Bool {
+        guard !configuration.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty else { return true }
+        if managedServer.state == .running { return true }
+        if managedServer.state != .starting {
+            managedServer.start(command: configuration.managedCommand, healthURL: configuration.healthProbeURL)
+        }
+        status = "Starting managed TTS server…"
+        while managedServer.state == .starting, !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+        }
+        if managedServer.state == .running { return true }
+        status = managedServer.state.label
+        return false
     }
 
     func stop() {
