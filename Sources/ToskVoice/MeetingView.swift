@@ -23,6 +23,8 @@ final class MeetingController: ObservableObject {
     @Published var remoteVolatile = ""
     @Published var availableApps: [TappableApp] = []
     @Published var selectedBundleID: String?
+    @Published var inputDevices: [AudioDevice] = []
+    @Published var selectedInputUID: String?
     @Published var question = ""
     @Published var qaEntries: [MeetingQAEntry] = []
     @Published var isAnswering = false
@@ -37,6 +39,7 @@ final class MeetingController: ObservableObject {
     init(preferences: PreferencesStore, profileProvider: @escaping @MainActor () -> DictationProfile) {
         self.preferences = preferences
         self.profileProvider = profileProvider
+        selectedInputUID = preferences.selectedInputUID
     }
 
     var hasUnsavedContent: Bool { isDirty && !segments.isEmpty }
@@ -47,6 +50,10 @@ final class MeetingController: ObservableObject {
     }
 
     func refreshApps() {
+        inputDevices = AudioDeviceManager.devices().filter(\.hasInput)
+        if let selectedInputUID, !inputDevices.contains(where: { $0.uid == selectedInputUID }) {
+            self.selectedInputUID = nil
+        }
         availableApps = SystemAudioTap.availableApps()
         if let selectedBundleID, !availableApps.contains(where: { $0.bundleID == selectedBundleID }) {
             self.selectedBundleID = nil
@@ -145,7 +152,7 @@ final class MeetingController: ObservableObject {
                 target: target,
                 locale: profile.speechMode.locale,
                 glossary: profile.glossary,
-                inputUID: preferences.selectedInputUID,
+                inputUID: selectedInputUID,
                 callbacks: .init(
                     onSegment: { [weak self] segment in
                         guard !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -391,7 +398,15 @@ private struct MeetingView: View {
                     Text(app.name).tag(String?.some(app.bundleID))
                 }
             }
-            .frame(maxWidth: 320)
+            .frame(maxWidth: 280)
+            .disabled(controller.isRunning)
+            Picker("Microphone", selection: $controller.selectedInputUID) {
+                Text("System Default").tag(String?.none)
+                ForEach(controller.inputDevices, id: \.uid) { device in
+                    Text(device.name).tag(String?.some(device.uid))
+                }
+            }
+            .frame(maxWidth: 280)
             .disabled(controller.isRunning)
             Button("Refresh") { controller.refreshApps() }
                 .disabled(controller.isRunning)
