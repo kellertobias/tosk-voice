@@ -6,7 +6,13 @@ ToskVoice is a native, local-first macOS menu-bar dictation app for Apple Silico
 
 ## Quick Start
 
-Build and install the current development version with Homebrew:
+Requirements:
+
+- Apple Silicon Mac running macOS 26 or newer.
+- Xcode with the macOS 26 SDK.
+- Network access while Homebrew downloads the source and SwiftPM dependencies.
+
+Build and install ToskVoice with Homebrew:
 
 ```sh
 brew tap kellertobias/tosk-voice https://github.com/kellertobias/tosk-voice.git
@@ -14,7 +20,7 @@ brew trust --cask kellertobias/tosk-voice/tosk-voice
 brew install --cask kellertobias/tosk-voice/tosk-voice
 ```
 
-The cask downloads the `main` source snapshot and builds ToskVoice locally, so it does not require a GitHub release asset. Building requires Xcode with the macOS 26 SDK and network access for SwiftPM dependencies.
+The cask downloads the `main` source snapshot and builds ToskVoice locally, so it does not require a GitHub release asset.
 
 The development build is not notarized. If macOS blocks the first launch, try to open ToskVoice once, then go to **System Settings -> Privacy & Security** and choose **Open Anyway**. The first launch may also require granting Microphone and Accessibility permissions. After granting Accessibility, use **Restart ToskVoice** in the Privacy tab so macOS applies the change to the running app.
 
@@ -40,13 +46,6 @@ Shortcuts are configurable in Settings. The defaults are `Control-Option-Space` 
 - Bundled Zed ACP agent and installable Obsidian companion.
 
 All downloaded speech models run locally after installation. External editor providers are used only when explicitly selected and configured.
-
-## Requirements
-
-- Apple Silicon Mac.
-- macOS 26 or newer.
-- Microphone permission for recording.
-- Accessibility permission for inserting dictated text and posting fallback paste events.
 
 ## Development
 
@@ -104,17 +103,9 @@ Use **Install Obsidian Companion...** to copy the plugin into a chosen vault. It
 
 The cask lives at `Casks/tosk-voice.rb`. It downloads the `main` source snapshot from [kellertobias/tosk-voice](https://github.com/kellertobias/tosk-voice), builds the app locally with the repository's `./build archive` command, and installs the resulting app bundle. It does not depend on a published GitHub release.
 
-Add this repository as a custom tap, trust the ToskVoice cask, and install it:
+The complete installation and requirements are in [Quick Start](#quick-start). Its `brew trust --cask` command authorizes only the ToskVoice cask from this non-official tap; it does not trust every cask or command in the repository.
 
-```sh
-brew tap kellertobias/tosk-voice https://github.com/kellertobias/tosk-voice.git
-brew trust --cask kellertobias/tosk-voice/tosk-voice
-brew install --cask kellertobias/tosk-voice/tosk-voice
-```
-
-The `brew trust --cask` command authorizes only the ToskVoice cask from this non-official tap. It does not trust every cask or command in the repository.
-
-The local build requires Xcode with the macOS 26 SDK and network access while SwiftPM downloads its pinned dependencies. To rebuild after changes land on `main`, run:
+The local build requires Xcode with the macOS 26 SDK and network access while SwiftPM downloads its pinned dependencies. To update or reinstall ToskVoice, run:
 
 ```sh
 brew update
