@@ -31,13 +31,13 @@ Shortcuts are configurable in Settings. The defaults are `Control-Option-Space` 
 - Timestamped Markdown transcript output.
 - Spoken correction handling, including natural phrases such as "strike that," "undo sentence," "replace X with Y," and German equivalents.
 - Optional Apple Intelligence processing for live draft edits and polished final text.
-- Local editable transcript history. Raw microphone audio is not retained.
+- Local editable transcript history with configurable retention, from 15 minutes to 3 months or off. Raw microphone audio is not retained.
 - Selectable microphones and output devices.
 - Optional WhisperKit, SpeakerKit, and Qwen3 TTS model packs with visible download/load state.
 - Optional SpeakerKit diarization with time-aligned speaker labels.
 - Text-to-speech from selected text or files using macOS voices, optional Qwen3 neural voices, and WAV/MP3 export.
-- File-only Voice Editor with Apple Intelligence or an OpenAI-compatible endpoint, approved workspace roots, native diff review, atomic writes, and undo.
-- Bundled Zed ACP agent and installable Obsidian companion.
+- Edit with Voice window: an expandable dictation editor with cursor-following dictation, push-to-talk, spoken corrections, file editing, and an "Improve Result" cleanup pass via Apple Intelligence or an OpenAI-compatible endpoint.
+- Bundled Zed ACP agent.
 
 All downloaded speech models run locally after installation. External editor providers are used only when explicitly selected and configured.
 
@@ -82,23 +82,21 @@ Install and open a release build locally:
 ./build archive install
 ```
 
-`archive` creates an arm64 ZIP plus SHA-256 checksum in `artifacts/`. It includes the Zed ACP helper, Obsidian companion, and LAME encoder.
+`archive` creates an arm64 ZIP plus SHA-256 checksum in `artifacts/`. It includes the Zed ACP helper and LAME encoder.
 
 The build script prefers `/Applications/Xcode.app` when installed. If `TOSKVOICE_SIGNING_IDENTITY` is unset, it tries to use the first Apple Development or Developer ID Application signing identity. If none is available, it falls back to ad-hoc signing, which can cause macOS privacy grants to reset after rebuilds.
 
 SwiftPM downloads pinned source dependencies automatically. The small arm64 LAME executable and license texts are vendored for reproducible MP3 export builds. The root `Brewfile` remains available for refreshing that tool.
 
-## Voice Editor
+## Edit with Voice
 
-Open **Voice Editor...** from the right-click menu, approve a workspace root, and choose either Apple Intelligence or an OpenAI-compatible API. Endpoint and model metadata stay in preferences; API keys are stored in macOS Keychain. A common local configuration is an Ollama-compatible `/v1` endpoint with no API key.
+Open **Edit with Voice...** from the right-click menu (or expand a running dictation from the overlay) to work on a transcript or any text file in a regular window: dictation follows the cursor, selections can be spoken over, and **Improve Result** removes filler words and stutters using Apple Intelligence or a configurable OpenAI-compatible endpoint (Ollama, mlx, OpenAI) set in Settings → General.
 
-The native editor validates model-proposed relative paths against the approved root, rejects symlink escapes and stale file contents, defaults to preview-before-apply, and writes changes atomically. Auto-apply is an explicit per-workspace option.
+## Zed
 
-## Zed and Obsidian
+The bundled `toskvoice-agent` helper implements ACP protocol version 1, reads supported text files below Zed's project `cwd`, has no terminal tool, and reports file diffs back to Zed.
 
-The Voice Editor window can copy the Zed `agent_servers` configuration for the bundled `toskvoice-agent`. The helper implements ACP protocol version 1, reads supported text files below Zed's project `cwd`, has no terminal tool, and reports file diffs back to Zed.
-
-Use **Install Obsidian Companion...** to copy the plugin into a chosen vault. Its command sends the current note path and selection through the `toskvoice://edit` handoff. ToskVoice still requires the vault to be an approved workspace before it can change files.
+It uses Apple Intelligence by default. To run it against an OpenAI-compatible endpoint instead, set `TOSKVOICE_MODEL` — and, as needed, `TOSKVOICE_BASE_URL` (default `http://localhost:11434/v1`) and `TOSKVOICE_API_KEY` — in the `agent_servers` entry for `toskvoice-agent` in Zed's settings.
 
 ## Homebrew
 
@@ -127,9 +125,9 @@ A local archive can also be installed with `./build archive install`.
 
 ## Privacy
 
-Speech recognition, diarization, Apple Intelligence corrections, and local TTS run on this Mac. ToskVoice stores preferences and transcript history in the user's Library. It does not retain raw audio.
+Speech recognition, diarization, Apple Intelligence corrections, and local TTS run on this Mac. ToskVoice stores preferences and transcript history in the user's Library. It does not retain raw audio. Transcript history is pruned automatically on the retention interval set in Settings → General, which defaults to 24 hours.
 
-Voice Editor workspace contents leave the Mac only when an external provider is selected. The UI identifies that provider before a request is sent.
+Text leaves the Mac only when an external provider is explicitly selected (for example for "Improve Result"). The settings identify that provider before a request is sent.
 
 ## Project Status
 

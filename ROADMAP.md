@@ -16,4 +16,4 @@
 
 - Persisted multi-level undo across application restarts.
 - ACP session history and streaming provider output.
-- Signed Obsidian community-plugin and ACP registry releases.
+- Signed ACP registry releases.
