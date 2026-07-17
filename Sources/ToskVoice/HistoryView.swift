@@ -9,6 +9,7 @@ final class HistoryWindowController {
     init(model: AppModel) { self.model = model }
 
     func show() {
+        model.history.prune()
         if let window {
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
@@ -46,7 +47,10 @@ private struct HistoryView: View {
             }
         } detail: {
             if let id = selectedID, let entry = store.entries.first(where: { $0.id == id }) {
+                // The detail keeps a local editing copy in @State; the .id
+                // forces a fresh detail when another sidebar entry is chosen.
                 HistoryDetail(entry: entry, store: store)
+                    .id(entry.id)
             } else {
                 ContentUnavailableView("Select a Dictation", systemImage: "text.quote")
             }

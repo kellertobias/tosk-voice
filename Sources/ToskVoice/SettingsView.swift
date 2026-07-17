@@ -1,19 +1,18 @@
 import AppKit
 import ServiceManagement
 import SwiftUI
-import UniformTypeIdentifiers
 
 enum SettingsTab: String {
     case general = "General"
-    case profiles = "Profiles"
+    case dictation = "Dictation"
     case models = "Models"
+    case textToSpeech = "Text to Speech"
     case privacy = "Privacy"
-    case extensions = "Extensions"
 }
 
 @MainActor
 final class SettingsNavigation: ObservableObject {
-    @Published var selectedTab: SettingsTab = .profiles
+    @Published var selectedTab: SettingsTab = .general
 }
 
 enum SettingsRelaunchState {
@@ -38,25 +37,10 @@ final class SettingsWindowController {
     private let navigation = SettingsNavigation()
     private let model: AppModel
     private let ttsController: TextToSpeechController
-    private let showTextToSpeech: @MainActor () -> Void
-    private let showVoiceEditor: @MainActor () -> Void
-    private let installObsidianCompanion: @MainActor () -> Void
-    private let copyZedConfiguration: @MainActor () -> Void
 
-    init(
-        model: AppModel,
-        ttsController: TextToSpeechController,
-        showTextToSpeech: @escaping @MainActor () -> Void,
-        showVoiceEditor: @escaping @MainActor () -> Void,
-        installObsidianCompanion: @escaping @MainActor () -> Void,
-        copyZedConfiguration: @escaping @MainActor () -> Void
-    ) {
+    init(model: AppModel, ttsController: TextToSpeechController) {
         self.model = model
         self.ttsController = ttsController
-        self.showTextToSpeech = showTextToSpeech
-        self.showVoiceEditor = showVoiceEditor
-        self.installObsidianCompanion = installObsidianCompanion
-        self.copyZedConfiguration = copyZedConfiguration
     }
 
     func show(tab: SettingsTab? = nil) {
@@ -71,11 +55,7 @@ final class SettingsWindowController {
         let view = SettingsView(
             model: model,
             ttsController: ttsController,
-            navigation: navigation,
-            showTextToSpeech: showTextToSpeech,
-            showVoiceEditor: showVoiceEditor,
-            installObsidianCompanion: installObsidianCompanion,
-            copyZedConfiguration: copyZedConfiguration
+            navigation: navigation
         )
         let controller = NSHostingController(rootView: view)
         let window = SettingsWindow(contentViewController: controller)
@@ -112,27 +92,15 @@ private struct SettingsView: View {
     @ObservedObject private var preferences: PreferencesStore
     @ObservedObject private var modelPacks: ModelPackController
     @StateObject private var permissions = PermissionCenter()
-    private let showTextToSpeech: @MainActor () -> Void
-    private let showVoiceEditor: @MainActor () -> Void
-    private let installObsidianCompanion: @MainActor () -> Void
-    private let copyZedConfiguration: @MainActor () -> Void
 
     init(
         model: AppModel,
         ttsController: TextToSpeechController,
-        navigation: SettingsNavigation,
-        showTextToSpeech: @escaping @MainActor () -> Void,
-        showVoiceEditor: @escaping @MainActor () -> Void,
-        installObsidianCompanion: @escaping @MainActor () -> Void,
-        copyZedConfiguration: @escaping @MainActor () -> Void
+        navigation: SettingsNavigation
     ) {
         self.model = model
         self.ttsController = ttsController
         self.navigation = navigation
-        self.showTextToSpeech = showTextToSpeech
-        self.showVoiceEditor = showVoiceEditor
-        self.installObsidianCompanion = installObsidianCompanion
-        self.copyZedConfiguration = copyZedConfiguration
         _preferences = ObservedObject(wrappedValue: model.preferences)
         _modelPacks = ObservedObject(wrappedValue: model.modelPacks)
     }
@@ -140,10 +108,10 @@ private struct SettingsView: View {
     var body: some View {
         TabView(selection: $navigation.selectedTab) {
             general.tag(SettingsTab.general).tabItem { Label("General", systemImage: "gearshape") }
-            profiles.tag(SettingsTab.profiles).tabItem { Label("Profiles", systemImage: "square.stack.3d.up") }
+            dictation.tag(SettingsTab.dictation).tabItem { Label("Dictation", systemImage: "mic") }
             models.tag(SettingsTab.models).tabItem { Label("Models", systemImage: "waveform.badge.magnifyingglass") }
+            textToSpeech.tag(SettingsTab.textToSpeech).tabItem { Label("Text to Speech", systemImage: "speaker.wave.2.bubble") }
             privacy.tag(SettingsTab.privacy).tabItem { Label("Privacy", systemImage: "hand.raised") }
-            extensions.tag(SettingsTab.extensions).tabItem { Label("Extensions", systemImage: "sparkles") }
         }
         .padding(20)
         .frame(minWidth: 680, minHeight: 500)
@@ -179,6 +147,39 @@ private struct SettingsView: View {
                     ForEach(model.outputDevices) { Text($0.name).tag($0.uid) }
                 }
             }
+            Section("Edit with Voice") {
+                Picker("Improve Result with", selection: Binding(
+                    get: { preferences.improvement.provider },
+                    set: { preferences.improvement.provider = $0 }
+                )) {
+                    ForEach(ImprovementProviderKind.allCases) { Text($0.label).tag($0) }
+                }
+                if preferences.improvement.provider == .openAICompatible {
+                    TextField("Server URL", text: Binding(
+                        get: { preferences.improvement.baseURL },
+                        set: { preferences.improvement.baseURL = $0 }
+                    ), prompt: Text("http://localhost:11434 or …/v1"))
+                    TextField("Model", text: Binding(
+                        get: { preferences.improvement.model },
+                        set: { preferences.improvement.model = $0 }
+                    ), prompt: Text("llama3.1, gpt-4.1-mini, …"))
+                    SecureField("API Key (optional)", text: Binding(
+                        get: { preferences.improvement.apiKey },
+                        set: { preferences.improvement.apiKey = $0 }
+                    ))
+                    Text("Any OpenAI-compatible chat endpoint works: Ollama, mlx-lm, LM Studio, or OpenAI itself.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text("“Improve Result” removes filler words, stutters, and other verbal artifacts from the text in the Edit with Voice window.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("History") {
+                Picker("Keep dictations for", selection: $preferences.historyRetention) {
+                    ForEach(HistoryRetention.allCases) { Text($0.label).tag($0) }
+                }
+                Text("Older entries are removed automatically. Applies to the History window; already-saved files are never touched.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section {
                 Toggle("Launch ToskVoice at login", isOn: Binding(
                     get: { preferences.launchAtLogin },
@@ -192,30 +193,45 @@ private struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    private var profiles: some View {
-        HStack(spacing: 18) {
-            VStack(spacing: 8) {
-                List(selection: $preferences.selectedProfileID) {
-                    ForEach(preferences.profiles) { profile in Text(profile.name).tag(profile.id) }
+    private var dictation: some View {
+        Form {
+            Section {
+                Picker("Overlay position", selection: $preferences.overlayPlacement) {
+                    ForEach(OverlayPlacement.allCases) { Text($0.label).tag($0) }
                 }
-                HStack {
-                    Button { preferences.addProfile() } label: { Image(systemName: "plus") }
-                    Button { preferences.deleteSelectedProfile() } label: { Image(systemName: "minus") }
-                        .disabled(preferences.profiles.count == 1)
-                    Spacer()
-                }
+                Toggle("Multi-speaker labels", isOn: $preferences.diarizationEnabled)
+                Text("The dictation language is switched directly in the dictation overlay or the menu-bar menu.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            .frame(width: 190)
-            Divider()
-            ProfileEditor(preferences: preferences)
+            Section("Transcript processing") {
+                Toggle("Spoken corrections", isOn: $preferences.spokenCorrectionsEnabled)
+                Text("Apply phrases such as “oh no,” “strike that,” and “let me rephrase” to the staged text immediately using a warm on-device model.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("Polish final text", isOn: $preferences.condensedOutputEnabled)
+                Text("On Stop, Apple’s on-device language model merges corrections and returns a concise final version. The original is kept if processing fails.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Vocabulary") {
+                TextEditor(text: Binding(
+                    get: { preferences.glossary.joined(separator: "\n") },
+                    set: { preferences.glossary = $0.split(separator: "\n").map(String.init) }
+                ))
+                .font(.body.monospaced())
+                .frame(minHeight: 110)
+                Text("One name or domain term per line — applied to Quick Dictation, Edit with Voice, and Meeting Transcript.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
+        .formStyle(.grouped)
     }
 
     private var models: some View {
         Form {
             Section("Apple Speech") {
                 LabeledContent("English and German", value: "Managed by macOS")
-                Text("Language assets download automatically the first time a profile uses them.")
+                Text("Language assets download automatically the first time they are used.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Automatic English + German") {
@@ -242,27 +258,88 @@ private struct SettingsView: View {
                     }
                 }
             }
-            Section("Text to Speech") {
-                ModelPackRow(
-                    title: "Qwen3 neural voice",
-                    state: modelPacks.neuralVoiceState,
-                    buttonTitle: "Install or Load Neural Voice..."
-                ) {
-                    Task {
-                        do { _ = try await modelPacks.prepareNeuralVoice() } catch { }
-                    }
+            Section("Model per feature") {
+                transcriptionModelPicker("Quick Dictation", selection: $preferences.quickDictationModel)
+                transcriptionModelPicker("Edit with Voice", selection: $preferences.editWithVoiceModel)
+                Picker("Meeting Transcript", selection: $preferences.meetingTranscriptModel) {
+                    Text(TranscriptionModelChoice.appleSpeech.label).tag(TranscriptionModelChoice.appleSpeech)
                 }
-                Text("macOS voices are managed by the system. The optional neural voice downloads from the Argmax model repository.")
+                Text("Only downloaded and installed models can be selected. Meeting Transcript always uses Apple Speech — WhisperKit cannot transcribe the system-audio lane.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            TTSServerSettingsSection(
-                preferences: preferences,
-                managed: ttsController.managedServer,
-                installer: ttsController.installer,
-                controller: ttsController
-            )
         }
         .formStyle(.grouped)
+    }
+
+    /// Model picker for one feature; WhisperKit is only offered once its
+    /// pack is downloaded and set up.
+    private func transcriptionModelPicker(_ title: String, selection: Binding<TranscriptionModelChoice>) -> some View {
+        let whisperAvailable = modelPacks.whisperAvailable
+        return Picker(title, selection: selection) {
+            Text(TranscriptionModelChoice.appleSpeech.label).tag(TranscriptionModelChoice.appleSpeech)
+            if whisperAvailable || selection.wrappedValue == .whisperBilingual {
+                Text(TranscriptionModelChoice.whisperBilingual.label).tag(TranscriptionModelChoice.whisperBilingual)
+            }
+        }
+    }
+
+    private var textToSpeech: some View {
+        Form {
+            Section("Engine") {
+                Picker("Use", selection: $preferences.ttsProvider) {
+                    ForEach(TTSProviderChoice.allCases) { Text($0.label).tag($0) }
+                }
+                .onChange(of: preferences.ttsProvider) { applyProviderDefaults() }
+            }
+            switch preferences.ttsProvider {
+            case .builtInOnly:
+                Section {
+                    LabeledContent("Options", value: "None")
+                    Text("Uses the voices built into macOS — nothing to install or configure. Voice and rate are chosen in the Text to Speech window.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            case .qwen3Neural:
+                Section {
+                    ModelPackRow(
+                        title: "Qwen3 neural voice",
+                        state: modelPacks.neuralVoiceState,
+                        buttonTitle: "Install or Load Neural Voice..."
+                    ) {
+                        Task {
+                            do { _ = try await modelPacks.prepareNeuralVoice() } catch { }
+                        }
+                    }
+                    Text("Downloads from the Argmax model repository and runs fully on this Mac.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            case .fish, .xtts:
+                TTSServerSettingsSection(
+                    preferences: preferences,
+                    managed: ttsController.managedServer,
+                    installer: ttsController.installer,
+                    controller: ttsController
+                )
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    /// Keeps the server configuration in line with the chosen provider so
+    /// the Text to Speech window can use it directly.
+    private func applyProviderDefaults() {
+        guard let engine = preferences.ttsProvider.serverEngine else { return }
+        var config = preferences.ttsServer
+        config.engine = engine
+        if config.mode == .off { config.mode = .local }
+        config.apiStyle = engine.apiStyle
+        if config.mode == .local {
+            let preset: TTSServerPreset = engine == .fish ? .fishSpeech : .xtts
+            let defaults = preset.configuration(autoStart: config.autoStart)
+            config.baseURL = defaults.baseURL
+            config.model = defaults.model
+            config.managedCommand = defaults.managedCommand
+        }
+        preferences.ttsServer = config
     }
 
     private var privacy: some View {
@@ -305,41 +382,6 @@ private struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    private var extensions: some View {
-        Form {
-            Section("Text to Speech") {
-                ExtensionActionRow(title: "macOS and optional Qwen3 voices", systemImage: "checkmark.circle") {
-                    Button("Open Text to Speech", action: showTextToSpeech)
-                    Button("Download Qwen3 Voice") {
-                        navigation.selectedTab = .models
-                        Task {
-                            do { _ = try await modelPacks.prepareNeuralVoice() } catch { }
-                        }
-                    }
-                }
-                ExtensionActionRow(title: "Selectable output and WAV/MP3 export", systemImage: "checkmark.circle") {
-                    Button("Output Settings") {
-                        navigation.selectedTab = .general
-                    }
-                    Button("Export Audio", action: showTextToSpeech)
-                }
-            }
-            Section("Voice Editor Agent") {
-                ExtensionActionRow(title: "Apple and OpenAI-compatible providers", systemImage: "checkmark.circle") {
-                    Button("Provider Settings", action: showVoiceEditor)
-                }
-                ExtensionActionRow(title: "Approved roots, native diff review, atomic undo", systemImage: "checkmark.circle") {
-                    Button("Workspace Settings", action: showVoiceEditor)
-                }
-                ExtensionActionRow(title: "Bundled Zed ACP and Obsidian companion", systemImage: "checkmark.circle") {
-                    Button("Copy Zed Config", action: copyZedConfiguration)
-                    Button("Install Obsidian", action: installObsidianCompanion)
-                }
-            }
-        }
-        .formStyle(.grouped)
-    }
-
     private func permissionRow(
         title: String,
         explanation: String,
@@ -358,21 +400,6 @@ private struct SettingsView: View {
                 Button("Open Settings") { permissions.openPrivacySettings(pane) }
             }
             Text(explanation).font(.caption).foregroundStyle(.secondary)
-        }
-    }
-}
-
-private struct ExtensionActionRow<Actions: View>: View {
-    let title: String
-    let systemImage: String
-    @ViewBuilder var actions: () -> Actions
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Label(title, systemImage: systemImage)
-            Spacer()
-            HStack(spacing: 8, content: actions)
-                .controlSize(.small)
         }
     }
 }
@@ -416,76 +443,8 @@ private struct ModelPackRow: View {
     }
 }
 
-private struct ProfileEditor: View {
-    @ObservedObject var preferences: PreferencesStore
-
-    private var profile: Binding<DictationProfile> {
-        Binding(get: { preferences.selectedProfile }, set: { preferences.selectedProfile = $0 })
-    }
-
-    var body: some View {
-        Form {
-            TextField("Name", text: profile.name)
-            Picker("Language", selection: profile.speechMode) {
-                ForEach(SpeechMode.allCases) { Text($0.label).tag($0) }
-            }
-            Picker("Destination", selection: profile.destination) {
-                ForEach(DestinationKind.allCases) { Text($0.label).tag($0) }
-            }
-            if profile.wrappedValue.destination == .markdown {
-                LabeledContent("File", value: profile.wrappedValue.markdownDisplayPath ?? "Not selected")
-                Button("Choose Markdown File…") { chooseMarkdown() }
-            }
-            Picker("Overlay position", selection: profile.overlayPlacement) {
-                ForEach(OverlayPlacement.allCases) { Text($0.label).tag($0) }
-            }
-            Toggle("Multi-speaker labels", isOn: profile.diarizationEnabled)
-            Section("Transcript processing") {
-                Toggle("Spoken corrections", isOn: Binding(
-                    get: { profile.wrappedValue.usesSpokenCorrections },
-                    set: { profile.wrappedValue.spokenCorrectionsEnabled = $0 }
-                ))
-                Text("Apply phrases such as “oh no,” “strike that,” and “let me rephrase” to the staged text immediately using a warm on-device model.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle("Polish final text", isOn: Binding(
-                    get: { profile.wrappedValue.producesCondensedOutput },
-                    set: { profile.wrappedValue.condensedOutputEnabled = $0 }
-                ))
-                Text("On Stop, Apple’s on-device language model merges corrections and returns a concise final version. The original is kept if processing fails.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Vocabulary").font(.headline)
-                TextEditor(text: Binding(
-                    get: { profile.wrappedValue.glossary.joined(separator: "\n") },
-                    set: { profile.wrappedValue.glossary = $0.split(separator: "\n").map(String.init) }
-                ))
-                .font(.body.monospaced())
-                .frame(minHeight: 110)
-                Text("One name or domain term per line.").font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private func chooseMarkdown() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue = "Dictation.md"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: Data()) }
-        if let data = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
-            profile.wrappedValue.markdownBookmark = data
-            profile.wrappedValue.markdownDisplayPath = url.path
-        }
-    }
-}
-
-/// Settings → Models section for the optional TTS server: choose off /
-/// local (installed and managed by ToskVoice) / remote, pick the engine,
+/// Settings → Text to Speech section for the Fish-Speech / XTTS server
+/// providers: choose local (installed and managed by ToskVoice) or remote,
 /// install a local server, and control auto-start. The TTS window itself
 /// only selects the model and voice.
 private struct TTSServerSettingsSection: View {
@@ -496,29 +455,18 @@ private struct TTSServerSettingsSection: View {
     @State private var showingFishAssistant = false
 
     var body: some View {
-        Section("TTS Server (Fish-Speech / XTTS)") {
+        Section(preferences.ttsServer.engine == .fish ? "Fish-Speech" : "XTTS v2") {
             Picker("Mode", selection: binding(\.mode)) {
-                ForEach(TTSServerMode.allCases) { Text($0.label).tag($0) }
+                Text(TTSServerMode.local.label).tag(TTSServerMode.local)
+                Text(TTSServerMode.remote.label).tag(TTSServerMode.remote)
             }
+            .pickerStyle(.segmented)
             .onChange(of: preferences.ttsServer.mode) { applyEngineDefaults() }
 
-            if preferences.ttsServer.mode != .off {
-                Picker("Engine", selection: binding(\.engine)) {
-                    Text("Fish-Speech").tag(TTSServerEngine.fish)
-                    Text("XTTS v2").tag(TTSServerEngine.xtts)
-                }
-                .onChange(of: preferences.ttsServer.engine) { applyEngineDefaults() }
-            }
-
-            if preferences.ttsServer.mode == .local {
-                localControls
-            } else if preferences.ttsServer.mode == .remote {
+            if preferences.ttsServer.mode == .remote {
                 remoteControls
-            }
-
-            if preferences.ttsServer.mode != .off {
-                Text("The engine appears in the Text to Speech window as \"\(preferences.ttsServer.displayName)\".")
-                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                localControls
             }
         }
         .sheet(isPresented: $showingFishAssistant) {
@@ -533,25 +481,21 @@ private struct TTSServerSettingsSection: View {
     @ViewBuilder
     private var localControls: some View {
         let preset: TTSServerPreset = preferences.ttsServer.engine == .fish ? .fishSpeech : .xtts
-        HStack {
-            Button("Install \(preset.label)…") { confirmInstall(preset) }
-                .disabled(installer.state.isRunning || managed.isRunning)
-            if installer.state.isRunning {
-                ProgressView().controlSize(.small)
-                Button("Cancel") { installer.cancel() }
+        if preset.isInstalled, !installer.state.isRunning {
+            HStack {
+                LabeledContent(preset.label, value: "Installed")
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
             }
-            Spacer()
-            Button(managed.isRunning ? "Stop Server" : "Start Server") {
-                if managed.isRunning {
-                    managed.stop()
-                } else {
-                    managed.start(
-                        command: preferences.ttsServer.managedCommand,
-                        healthURL: preferences.ttsServer.healthProbeURL
-                    )
+        } else {
+            HStack {
+                Button("Install \(preset.label)…") { confirmInstall(preset) }
+                    .disabled(installer.state.isRunning || managed.isRunning)
+                if installer.state.isRunning {
+                    ProgressView().controlSize(.small)
+                    Button("Cancel") { installer.cancel() }
                 }
             }
-            .disabled(preferences.ttsServer.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         if installer.state != .idle {
             CopyableStatusText(
@@ -563,15 +507,31 @@ private struct TTSServerSettingsSection: View {
                     .lineLimit(1).truncationMode(.head)
             }
         }
+        if preferences.ttsServer.engine == .xtts ? TTSServerPreset.xtts.isInstalled : TTSServerPreset.fishSpeech.isInstalled {
         Toggle("Start the server automatically when ToskVoice launches", isOn: binding(\.autoStart))
             .disabled(preferences.ttsServer.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty)
         LabeledContent("Server status") {
-            CopyableStatusText(
-                text: managed.state.label,
-                color: { if case .failed = managed.state { .red } else { nil } }()
-            )
+            HStack {
+                CopyableStatusText(
+                    text: managed.state.label,
+                    color: { if case .failed = managed.state { .red } else { nil } }()
+                )
+                Button(managed.isRunning ? "Stop Server" : "Start Server") {
+                    if managed.isRunning {
+                        managed.stop()
+                    } else {
+                        managed.start(
+                            command: preferences.ttsServer.managedCommand,
+                            healthURL: preferences.ttsServer.healthProbeURL
+                        )
+                    }
+                }
+                .font(.body)
+                .disabled(preferences.ttsServer.managedCommand.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
         }
         .font(.caption)
+        }
     }
 
     @ViewBuilder

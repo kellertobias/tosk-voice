@@ -123,11 +123,22 @@ private struct OverlayView: View {
                 stateIndicator
                 Text(model.state.label)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                Text(model.profile.name)
+                Text("Quick Dictation")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
                 if model.state.isActive {
+                    Button {
+                        model.expandToEditor()
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .frame(width: 26, height: 26)
+                            .contentShape(Rectangle())
+                    }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Expand into Edit with Voice")
+                        .help("Expand into the Edit with Voice window — the dictation detaches from the target field and continues there")
                     Button {
                         Task { await model.cancel() }
                     } label: {
@@ -202,9 +213,26 @@ private struct OverlayView: View {
             }
 
             HStack {
-                Label(model.profile.speechMode.label, systemImage: "character.bubble")
+                if model.usesBilingualQuickDictation {
+                    Label("Automatic (English + German)", systemImage: "character.bubble")
+                } else {
+                    Picker(selection: Binding(
+                        get: { model.effectiveLocale.identifier },
+                        set: { model.selectLanguage($0) }
+                    )) {
+                        ForEach(model.availableLanguages, id: \.identifier) { locale in
+                            Text(DictationLanguages.label(for: locale)).tag(locale.identifier)
+                        }
+                    } label: {
+                        Label("Language", systemImage: "character.bubble")
+                    }
+                    .pickerStyle(.menu)
+                    .controlSize(.mini)
+                    .fixedSize()
+                    .help("Switch the dictation language — takes effect immediately, already-spoken text is kept")
+                }
                 Spacer()
-                Label(model.profile.destination.label, systemImage: model.profile.destination == .focusedField ? "text.cursor" : "doc.text")
+                Label("Focused Text Field", systemImage: "text.cursor")
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
@@ -285,7 +313,7 @@ private struct TranscriptHeightPreferenceKey: PreferenceKey {
     }
 }
 
-private struct WaveformView: View {
+struct WaveformView: View {
     let levels: [Float]
     let active: Bool
     let reduceMotion: Bool

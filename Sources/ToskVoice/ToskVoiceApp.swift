@@ -19,34 +19,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuController: MenuController!
     private var overlayController: OverlayController!
     private var shortcutManager: ShortcutManager!
-    private var voiceEditor: VoiceEditorAgentWindowController!
     private var serviceProvider: TextServiceProvider!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu()
         let preferences = PreferencesStore()
         let history = HistoryStore()
+        history.configureRetention { [weak preferences] in preferences?.historyRetention.maxAge }
         let modelPacks = ModelPackController()
-        let agentPreferences = AgentPreferencesStore()
         model = AppModel(preferences: preferences, history: history, modelPacks: modelPacks)
         let historyWindow = HistoryWindowController(model: model)
         let textToSpeech = TextToSpeechWindowController(modelPacks: modelPacks, preferences: preferences)
-        let voiceEditorWindow = VoiceEditorAgentWindowController(preferences: agentPreferences)
-        voiceEditor = voiceEditorWindow
-        let appModel = model!
-        let meeting = MeetingWindowController(preferences: preferences, modelPacks: modelPacks) { appModel.profile }
-        let settings = SettingsWindowController(
-            model: model,
-            ttsController: textToSpeech.controller,
-            showTextToSpeech: { textToSpeech.show() },
-            showVoiceEditor: { voiceEditorWindow.show() },
-            installObsidianCompanion: { voiceEditorWindow.installObsidianCompanion() },
-            copyZedConfiguration: { voiceEditorWindow.copyZedConfiguration() }
-        )
+        let meeting = MeetingWindowController(preferences: preferences, modelPacks: modelPacks)
+        let dictationEditor = DictationEditorWindowController(preferences: preferences, modelPacks: modelPacks)
+        model.onEditorExpansionRequested = { transcript in dictationEditor.showExpanded(transcript: transcript) }
+        let settings = SettingsWindowController(model: model, ttsController: textToSpeech.controller)
         if let selectedTab = SettingsRelaunchState.consumeSelectedTab() {
             settings.show(tab: selectedTab)
         }
-        menuController = MenuController(model: model, settings: settings, history: historyWindow, textToSpeech: textToSpeech, voiceEditor: voiceEditor, meeting: meeting)
+        menuController = MenuController(model: model, settings: settings, history: historyWindow, textToSpeech: textToSpeech, meeting: meeting, dictationEditor: dictationEditor)
         overlayController = OverlayController(model: model, statusButton: menuController.statusItem.button)
 
         model.onOverlayRequested = { [weak self] placement in self?.overlayController.show(at: placement) }
@@ -115,12 +106,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.keyWindow?.performClose(nil)
     }
 
-    func application(_ application: NSApplication, open urls: [URL]) {
-        guard let url = urls.first, url.scheme == "toskvoice", url.host == "edit",
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
-        let instruction = components.queryItems?.first(where: { $0.name == "instruction" })?.value ?? ""
-        voiceEditor.show(instruction: instruction)
-    }
 }
 
 /// Handles the "ToskVoice: Speak Selection" entry in the system Services

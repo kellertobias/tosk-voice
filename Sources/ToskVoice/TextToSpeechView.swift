@@ -56,38 +56,45 @@ private struct TextToSpeechView: View {
                 Button("Use Selection") { controller.useCurrentSelection() }
                 Button("Open Text File…") { controller.openTextFile() }
                 Spacer()
-                CopyableStatusText(text: controller.status)
-            }
-            TextEditor(text: $controller.text)
-                .font(.body)
-                .padding(10)
-                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
-            HStack {
-                Picker("Model", selection: $controller.engineChoice) {
-                    Text("macOS Voice").tag(TTSEngineChoice.system)
-                    Text("Qwen3 Neural").tag(TTSEngineChoice.neural)
-                    if preferences.ttsServer.isUsable {
-                        Text(preferences.ttsServer.displayName).tag(TTSEngineChoice.server)
-                    }
-                }
-                .frame(maxWidth: 280)
-                voiceControls
-            }
-            HStack {
                 Button(controller.isSpeaking ? "Stop" : "Play") {
                     controller.isSpeaking ? controller.stop() : controller.play()
                 }
                 .buttonStyle(.borderedProminent)
                 Button("Generate MP3…") { controller.exportAudio() }
-                Spacer()
+            }
+            CopyableStatusText(text: controller.status)
+            TextEditor(text: $controller.text)
+                .font(.body)
+                .padding(10)
+                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+            HStack {
+                if let advanced = controller.advancedEngine {
+                    Picker("Model", selection: Binding(
+                        get: { controller.engineChoice == .system ? TTSEngineChoice.system : advanced },
+                        set: { controller.engineChoice = $0 }
+                    )) {
+                        Text("Built-In").tag(TTSEngineChoice.system)
+                        Text("Advanced (\(preferences.ttsProvider.label))").tag(advanced)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 340)
+                }
+                voiceControls
             }
         }
         .padding(22)
         .frame(minWidth: 620, minHeight: 440)
-        .onChange(of: preferences.ttsServer.isUsable) {
-            if !preferences.ttsServer.isUsable, controller.engineChoice == .server {
-                controller.engineChoice = .system
-            }
+        .onChange(of: preferences.ttsProvider) { alignEngineChoice() }
+        .onChange(of: preferences.ttsServer.isConfigured) { alignEngineChoice() }
+        .onAppear { alignEngineChoice() }
+    }
+
+    /// Falls back to the built-in engine when the configured provider can no
+    /// longer serve the current selection.
+    private func alignEngineChoice() {
+        guard controller.engineChoice != .system else { return }
+        if controller.engineChoice != controller.advancedEngine {
+            controller.engineChoice = controller.advancedEngine ?? .system
         }
     }
 

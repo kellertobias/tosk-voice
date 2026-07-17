@@ -75,14 +75,33 @@ final class ModelPackController: ObservableObject {
     private(set) var speakerKit: SpeakerKit?
     private(set) var ttsKit: TTSKit?
 
+    /// True when the WhisperKit pack can be offered in the per-feature model
+    /// pickers: loaded this session, or its files already downloaded.
+    var whisperAvailable: Bool {
+        whisperState.isReady || Self.whisperPackExistsOnDisk()
+    }
+
+    /// Whether the WhisperKit model files exist locally (a completed
+    /// `WhisperKit.download` leaves them under Documents/huggingface).
+    nonisolated static func whisperPackExistsOnDisk() -> Bool {
+        let repo = FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("huggingface/models/argmaxinc/whisperkit-coreml", isDirectory: true)
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: repo.path) else { return false }
+        return entries.contains { $0.contains("large-v3-v20240930_626MB") }
+    }
+
     func prepareWhisper() async throws -> WhisperKit {
         if let whisperKit { return whisperKit }
         let model = "large-v3-v20240930_626MB"
         whisperState = .downloading(nil)
         do {
+            // In-process session: background (nsurlsessiond) sessions drop the
+            // connection for ad-hoc-signed dev builds (NSURLError -996), and a
+            // menu-bar app never gets suspended, so background buys nothing.
             let modelFolder = try await WhisperKit.download(
                 variant: model,
-                useBackgroundSession: true
+                useBackgroundSession: false
             ) { [weak self] progress in
                 Task<Void, Never> { @MainActor in
                     self?.whisperState = .downloadProgress(progress)
@@ -96,7 +115,7 @@ final class ModelPackController: ObservableObject {
                 prewarm: true,
                 load: true,
                 download: false,
-                useBackgroundDownloadSession: true
+                useBackgroundDownloadSession: false
             )
             let kit = try await WhisperKit(config)
             whisperKit = kit
@@ -163,7 +182,7 @@ final class ModelPackController: ObservableObject {
             let config = TTSKitConfig(
                 model: .qwen3TTS_0_6b,
                 verbose: false,
-                useBackgroundDownloadSession: true,
+                useBackgroundDownloadSession: false,
                 download: false,
                 prewarm: true,
                 load: true
