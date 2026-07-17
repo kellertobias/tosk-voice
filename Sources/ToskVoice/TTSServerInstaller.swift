@@ -42,7 +42,11 @@ enum TTSServerPreset: String, CaseIterable, Identifiable {
             FISH_COMMIT=d3df50503b36314a964f66cac1af1e19e95bcfa3
             git rev-parse --quiet --verify "$FISH_COMMIT^{commit}" >/dev/null || git fetch origin
             git checkout --quiet "$FISH_COMMIT"
-            uv sync
+            # Fish-Speech resolves torch 2.8, which has no CPython 3.14 wheel.
+            # Provision a compatible managed interpreter and make uv replace a
+            # partially-created environment that used Homebrew's newest Python.
+            uv python install 3.13
+            uv sync --python 3.13
             uv pip install 'huggingface_hub[cli]'
             if [ -z "${HF_TOKEN:-}" ] && ! uv run hf auth whoami >/dev/null 2>&1; then
                 echo "NEEDS-HF-TOKEN"
