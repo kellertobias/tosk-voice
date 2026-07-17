@@ -35,6 +35,16 @@ final class TextToSpeechController: ObservableObject {
         self.preferences = preferences
     }
 
+    /// The engine behind the window's "Advanced" mode, from the provider
+    /// chosen in Settings → Text to Speech; nil when set to Built-In Only.
+    var advancedEngine: TTSEngineChoice? {
+        switch preferences.ttsProvider {
+        case .builtInOnly: nil
+        case .qwen3Neural: .neural
+        case .fish, .xtts: preferences.ttsServer.isConfigured ? .server : nil
+        }
+    }
+
     var voices: [AVSpeechSynthesisVoice] {
         AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language.hasPrefix("en") || $0.language.hasPrefix("de") }
@@ -297,7 +307,7 @@ final class TextToSpeechController: ObservableObject {
         case .server:
             let configuration = preferences.ttsServer
             guard let endpoint = configuration.speechEndpoint else {
-                throw TTSError.audioOutputFailed("Configure the TTS server in Settings → Models first.")
+                throw TTSError.audioOutputFailed("Configure the TTS server in Settings → Text to Speech first.")
             }
             let data = try await serverAudio(for: content, configuration: configuration, endpoint: endpoint)
             try data.write(to: temporary)

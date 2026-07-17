@@ -7,18 +7,18 @@ final class MenuController: NSObject, NSMenuDelegate {
     private let settings: SettingsWindowController
     private let history: HistoryWindowController
     private let textToSpeech: TextToSpeechWindowController
-    private let voiceEditor: VoiceEditorAgentWindowController
     private let meeting: MeetingWindowController
+    private let dictationEditor: DictationEditorWindowController
     private var meterLevels: [CGFloat] = [0.12, 0.12, 0.12, 0.12]
     private let statusMenu = NSMenu()
 
-    init(model: AppModel, settings: SettingsWindowController, history: HistoryWindowController, textToSpeech: TextToSpeechWindowController, voiceEditor: VoiceEditorAgentWindowController, meeting: MeetingWindowController) {
+    init(model: AppModel, settings: SettingsWindowController, history: HistoryWindowController, textToSpeech: TextToSpeechWindowController, meeting: MeetingWindowController, dictationEditor: DictationEditorWindowController) {
         self.model = model
         self.settings = settings
         self.history = history
         self.textToSpeech = textToSpeech
-        self.voiceEditor = voiceEditor
         self.meeting = meeting
+        self.dictationEditor = dictationEditor
         super.init()
         if let button = statusItem.button {
             setStatusImage(
@@ -100,11 +100,30 @@ final class MenuController: NSObject, NSMenuDelegate {
         meetingItem.target = self
         meetingItem.image = NSImage(systemSymbolName: "person.2.wave.2", accessibilityDescription: nil)
         menu.addItem(meetingItem)
+
+        let editWithVoiceItem = NSMenuItem(title: "Edit with Voice…", action: #selector(showDictationEditor), keyEquivalent: "")
+        editWithVoiceItem.target = self
+        editWithVoiceItem.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)
+        menu.addItem(editWithVoiceItem)
         menu.addItem(.separator())
 
-        menu.addItem(submenuItem(title: "Profile: \(model.profile.name)", image: "square.stack.3d.up", entries: model.preferences.profiles.map { profile in
-            menuItem(profile.name, checked: profile.id == model.preferences.selectedProfileID) { [weak model] in model?.selectProfile(profile.id) }
-        }))
+        if model.usesBilingualQuickDictation {
+            let language = NSMenuItem(title: "Language: Automatic (English + German)", action: nil, keyEquivalent: "")
+            language.image = NSImage(systemSymbolName: "character.bubble", accessibilityDescription: nil)
+            language.isEnabled = false
+            menu.addItem(language)
+        } else {
+            menu.addItem(submenuItem(
+                title: "Language: \(DictationLanguages.label(for: model.effectiveLocale))",
+                image: "character.bubble",
+                entries: model.availableLanguages.map { locale in
+                    menuItem(
+                        DictationLanguages.label(for: locale),
+                        checked: locale.identifier == model.effectiveLocale.identifier
+                    ) { [weak model] in model?.selectLanguage(locale.identifier) }
+                }
+            ))
+        }
         menu.addItem(submenuItem(title: "Microphone", image: "mic", entries: [
             menuItem("System Default", checked: model.preferences.selectedInputUID == nil) { [weak model] in model?.selectInput(nil) }
         ] + model.inputDevices.map { device in
@@ -118,19 +137,19 @@ final class MenuController: NSObject, NSMenuDelegate {
 
         let speakers = NSMenuItem(title: "Multi-speaker Labels", action: #selector(toggleDiarization), keyEquivalent: "")
         speakers.target = self
-        speakers.state = model.profile.diarizationEnabled ? .on : .off
+        speakers.state = model.preferences.diarizationEnabled ? .on : .off
         speakers.toolTip = "The optional SpeakerKit model downloads when first enabled."
         menu.addItem(speakers)
 
         let corrections = NSMenuItem(title: "Spoken Corrections", action: #selector(toggleSpokenCorrections), keyEquivalent: "")
         corrections.target = self
-        corrections.state = model.profile.usesSpokenCorrections ? .on : .off
+        corrections.state = model.preferences.spokenCorrectionsEnabled ? .on : .off
         corrections.toolTip = "Apply spoken corrections to the staged transcript immediately with Apple’s on-device model."
         menu.addItem(corrections)
 
         let condensedOutput = NSMenuItem(title: "Polish Final Text", action: #selector(toggleCondensedOutput), keyEquivalent: "")
         condensedOutput.target = self
-        condensedOutput.state = model.profile.producesCondensedOutput ? .on : .off
+        condensedOutput.state = model.preferences.condensedOutputEnabled ? .on : .off
         condensedOutput.toolTip = "Use Apple’s on-device language model to merge corrections and condense the final transcript."
         menu.addItem(condensedOutput)
         menu.addItem(.separator())
@@ -139,11 +158,6 @@ final class MenuController: NSObject, NSMenuDelegate {
         ttsItem.target = self
         ttsItem.image = NSImage(systemSymbolName: "speaker.wave.2.bubble", accessibilityDescription: nil)
         menu.addItem(ttsItem)
-
-        let editorItem = NSMenuItem(title: "Voice Editor…", action: #selector(showVoiceEditor), keyEquivalent: "")
-        editorItem.target = self
-        editorItem.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: nil)
-        menu.addItem(editorItem)
 
         let historyItem = NSMenuItem(title: "History…", action: #selector(showHistory), keyEquivalent: "")
         historyItem.target = self
@@ -186,8 +200,8 @@ final class MenuController: NSObject, NSMenuDelegate {
     @objc private func showSettings() { settings.show() }
     @objc private func showHistory() { history.show() }
     @objc private func showTextToSpeech() { textToSpeech.show() }
-    @objc private func showVoiceEditor() { voiceEditor.show() }
     @objc private func showMeeting() { meeting.show() }
+    @objc private func showDictationEditor() { dictationEditor.show() }
     @objc private func toggleDiarization() { model.toggleDiarization() }
     @objc private func toggleSpokenCorrections() { model.toggleSpokenCorrections() }
     @objc private func toggleCondensedOutput() { model.toggleCondensedOutput() }

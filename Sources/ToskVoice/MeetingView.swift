@@ -38,12 +38,10 @@ final class MeetingController: ObservableObject {
     private let speakerLabeler = SpeakerLabeler()
     private let preferences: PreferencesStore
     private let modelPacks: ModelPackController
-    private let profileProvider: @MainActor () -> DictationProfile
 
-    init(preferences: PreferencesStore, modelPacks: ModelPackController, profileProvider: @escaping @MainActor () -> DictationProfile) {
+    init(preferences: PreferencesStore, modelPacks: ModelPackController) {
         self.preferences = preferences
         self.modelPacks = modelPacks
-        self.profileProvider = profileProvider
         selectedInputUID = preferences.selectedInputUID
     }
 
@@ -146,7 +144,6 @@ final class MeetingController: ObservableObject {
         session.isMicMuted = isMicMuted
         runFirstSegmentIndex = segments.count
         status = "Starting…"
-        let profile = profileProvider()
         let target: SystemAudioTap.Target
         if let bundleID = selectedBundleID, let app = availableApps.first(where: { $0.bundleID == bundleID }) {
             target = .app(app)
@@ -156,8 +153,8 @@ final class MeetingController: ObservableObject {
         do {
             try await session.start(
                 target: target,
-                locale: profile.speechMode.locale,
-                glossary: profile.glossary,
+                locale: preferences.effectiveLocale,
+                glossary: preferences.glossary,
                 inputUID: selectedInputUID,
                 callbacks: .init(
                     onSegment: { [weak self] segment in
@@ -335,8 +332,8 @@ final class MeetingWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let controller: MeetingController
 
-    init(preferences: PreferencesStore, modelPacks: ModelPackController, profileProvider: @escaping @MainActor () -> DictationProfile) {
-        controller = MeetingController(preferences: preferences, modelPacks: modelPacks, profileProvider: profileProvider)
+    init(preferences: PreferencesStore, modelPacks: ModelPackController) {
+        controller = MeetingController(preferences: preferences, modelPacks: modelPacks)
     }
 
     func show() {

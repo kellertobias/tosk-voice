@@ -87,7 +87,6 @@ package_app() {
   cp "$bin_path/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
   cp "$ROOT/Assets/ToskVoice.icns" "$APP/Contents/Resources/ToskVoice.icns"
   cp "$bin_path/toskvoice-agent" "$APP/Contents/Helpers/toskvoice-agent"
-  ditto "$ROOT/Integrations/obsidian" "$APP/Contents/Resources/Integrations/obsidian"
   ditto "$ROOT/Packaging/zed" "$APP/Contents/Resources/Integrations/zed"
   cp "$LAME_SOURCE" "$APP/Contents/Resources/lame"
   cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/Third-Party-Notices.md"

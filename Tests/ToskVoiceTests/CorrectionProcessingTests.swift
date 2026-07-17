@@ -49,22 +49,40 @@ final class CorrectionProcessingTests: XCTestCase {
         ))
     }
 
-    func testOlderProfileDefaultsToCorrectionsOnAndPolishingOff() throws {
+    /// Preferences saved by builds that still had profiles migrate: the
+    /// selected profile seeds the flat settings.
+    @MainActor
+    func testLegacyProfileSnapshotSeedsFlatPreferences() throws {
+        let suiteName = "CorrectionProcessingTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let json = """
         {
-          "id": "28BDF2DA-3DA7-4B68-9EFD-AE37FC2A5961",
-          "name": "Existing Profile",
-          "speechMode": "english",
-          "destination": "focusedField",
-          "overlayPlacement": "menuBar",
-          "glossary": [],
-          "diarizationEnabled": false
+          "profiles": [{
+            "id": "28BDF2DA-3DA7-4B68-9EFD-AE37FC2A5961",
+            "name": "Existing Profile",
+            "speechMode": "automaticBilingual",
+            "destination": "focusedField",
+            "overlayPlacement": "topRight",
+            "glossary": ["Apos"],
+            "diarizationEnabled": true,
+            "condensedOutputEnabled": true
+          }],
+          "selectedProfileID": "28BDF2DA-3DA7-4B68-9EFD-AE37FC2A5961",
+          "launchAtLogin": false
         }
         """
+        defaults.set(Data(json.utf8), forKey: "ToskVoice.Preferences.v1")
 
-        let profile = try JSONDecoder().decode(DictationProfile.self, from: Data(json.utf8))
+        let store = PreferencesStore(defaults: defaults)
 
-        XCTAssertTrue(profile.usesSpokenCorrections)
-        XCTAssertFalse(profile.producesCondensedOutput)
+        XCTAssertEqual(store.glossary, ["Apos"])
+        XCTAssertEqual(store.overlayPlacement, .topRight)
+        XCTAssertTrue(store.diarizationEnabled)
+        XCTAssertTrue(store.spokenCorrectionsEnabled)
+        XCTAssertTrue(store.condensedOutputEnabled)
+        XCTAssertEqual(store.quickDictationModel, .whisperBilingual)
+        XCTAssertEqual(store.editWithVoiceModel, .appleSpeech)
+        XCTAssertEqual(store.ttsProvider, .builtInOnly)
     }
 }

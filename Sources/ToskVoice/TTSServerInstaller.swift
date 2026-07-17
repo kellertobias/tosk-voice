@@ -34,6 +34,14 @@ enum TTSServerPreset: String, CaseIterable, Identifiable {
             mkdir -p "$HOME/src"
             [ -d "$HOME/src/fish-speech" ] || git clone https://github.com/fishaudio/fish-speech "$HOME/src/fish-speech"
             cd "$HOME/src/fish-speech"
+            # Pinned: last commit compatible with openaudio-s1-mini's tiktoken
+            # tokenizer. The "S2 beta" rewrite (March 2026) switched to
+            # AutoTokenizer, which cannot load this checkpoint — the server
+            # then dies on startup with "'NoneType' object has no attribute
+            # 'encode'".
+            FISH_COMMIT=d3df50503b36314a964f66cac1af1e19e95bcfa3
+            git rev-parse --quiet --verify "$FISH_COMMIT^{commit}" >/dev/null || git fetch origin
+            git checkout --quiet "$FISH_COMMIT"
             uv sync
             uv pip install 'huggingface_hub[cli]'
             if [ -z "${HF_TOKEN:-}" ] && ! uv run hf auth whoami >/dev/null 2>&1; then
@@ -55,6 +63,18 @@ enum TTSServerPreset: String, CaseIterable, Identifiable {
             echo "SETUP-COMPLETE"
             """
         }
+    }
+
+    /// Whether the preset's install artifacts already exist on disk. Checks
+    /// the same files the managed launch command depends on, so a partial
+    /// install (interrupted clone or model download) still counts as absent.
+    var isInstalled: Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let marker = switch self {
+        case .fishSpeech: "src/fish-speech/checkpoints/openaudio-s1-mini/codec.pth"
+        case .xtts: "src/openedai-speech/venv"
+        }
+        return FileManager.default.fileExists(atPath: home.appendingPathComponent(marker).path)
     }
 
     /// Configuration applied on successful setup; the API key is preserved

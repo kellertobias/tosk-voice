@@ -30,23 +30,20 @@ enum DictationState: Equatable, Sendable {
     }
 }
 
-enum SpeechMode: String, Codable, CaseIterable, Identifiable, Sendable {
-    case english
-    case german
-    case automaticBilingual
+/// The speech-to-text model a dictation feature runs on. Only models whose
+/// assets are installed may be selected in Settings → Models.
+enum TranscriptionModelChoice: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// Apple's on-device SpeechAnalyzer; language assets are managed by macOS.
+    case appleSpeech
+    /// WhisperKit Large-v3 Turbo model pack; transcribes English and German
+    /// automatically (per-utterance language detection).
+    case whisperBilingual
 
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .english: "English"
-        case .german: "German"
-        case .automaticBilingual: "English + German (model pack)"
-        }
-    }
-    var locale: Locale {
-        switch self {
-        case .german: Locale(identifier: "de-DE")
-        default: Locale(identifier: "en-US")
+        case .appleSpeech: "Apple Speech"
+        case .whisperBilingual: "WhisperKit (English + German)"
         }
     }
 }
@@ -92,6 +89,34 @@ enum TTSServerAPIStyle: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .openAI: "OpenAI-compatible"
         case .fishSpeech: "Fish-Speech native"
+        }
+    }
+}
+
+/// Which text-to-speech engine ToskVoice uses, chosen in Settings → Text to
+/// Speech. The same choice powers the Text to Speech window's "Advanced" mode.
+enum TTSProviderChoice: String, Codable, CaseIterable, Identifiable, Sendable {
+    case builtInOnly
+    case qwen3Neural
+    case fish
+    case xtts
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .builtInOnly: "Built-In Only"
+        case .qwen3Neural: "Qwen3 Neural Voice"
+        case .fish: "Fish-Speech"
+        case .xtts: "XTTS v2"
+        }
+    }
+
+    /// The server engine backing this provider, when it is server-based.
+    var serverEngine: TTSServerEngine? {
+        switch self {
+        case .builtInOnly, .qwen3Neural: nil
+        case .fish: .fish
+        case .xtts: .xtts
         }
     }
 }
@@ -168,14 +193,6 @@ struct TTSServerConfiguration: Codable, Equatable, Sendable {
 
     var isConfigured: Bool { !baseURL.trimmingCharacters(in: .whitespaces).isEmpty }
 
-    /// True when the server engine can be offered in the TTS window.
-    var isUsable: Bool { mode != .off && isConfigured }
-
-    /// Dropdown label in the TTS window, e.g. "Fish (local)" or "XTTS (Server)".
-    var displayName: String {
-        "\(engine.label) (\(mode == .local ? "local" : "Server"))"
-    }
-
     /// Root URL used to detect that the (managed) server is accepting
     /// connections; any HTTP response counts.
     var healthProbeURL: URL? {
@@ -199,12 +216,109 @@ struct TTSServerConfiguration: Codable, Equatable, Sendable {
     }
 }
 
-enum DestinationKind: String, Codable, CaseIterable, Identifiable, Sendable {
-    case focusedField
-    case markdown
+/// How long dictation history entries are kept. `off` disables automatic
+/// deletion (entries are kept until cleared manually).
+enum HistoryRetention: String, Codable, CaseIterable, Identifiable, Sendable {
+    case off
+    case minutes15, minutes30
+    case hours1, hours2, hours4, hours8, hours12, hours24
+    case days2, days5, days7, days14
+    case months1, months3
 
     var id: String { rawValue }
-    var label: String { self == .focusedField ? "Focused Text Field" : "Markdown File" }
+
+    var label: String {
+        switch self {
+        case .off: "Off (keep forever)"
+        case .minutes15: "15 minutes"
+        case .minutes30: "30 minutes"
+        case .hours1: "1 hour"
+        case .hours2: "2 hours"
+        case .hours4: "4 hours"
+        case .hours8: "8 hours"
+        case .hours12: "12 hours"
+        case .hours24: "24 hours"
+        case .days2: "2 days"
+        case .days5: "5 days"
+        case .days7: "7 days"
+        case .days14: "14 days"
+        case .months1: "1 month"
+        case .months3: "3 months"
+        }
+    }
+
+    /// Maximum entry age in seconds; nil disables pruning.
+    var maxAge: TimeInterval? {
+        switch self {
+        case .off: nil
+        case .minutes15: 15 * 60
+        case .minutes30: 30 * 60
+        case .hours1: 3_600
+        case .hours2: 2 * 3_600
+        case .hours4: 4 * 3_600
+        case .hours8: 8 * 3_600
+        case .hours12: 12 * 3_600
+        case .hours24: 24 * 3_600
+        case .days2: 2 * 86_400
+        case .days5: 5 * 86_400
+        case .days7: 7 * 86_400
+        case .days14: 14 * 86_400
+        case .months1: 30 * 86_400
+        case .months3: 90 * 86_400
+        }
+    }
+}
+
+enum ImprovementProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
+    case appleIntelligence
+    case openAICompatible
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .appleIntelligence: "Apple Intelligence (on-device)"
+        case .openAICompatible: "External server (Ollama / mlx / OpenAI)"
+        }
+    }
+}
+
+/// Provider for the Edit with Voice window's "Improve Result" action.
+/// External servers must speak the OpenAI chat-completions API, which
+/// Ollama, mlx-lm, LM Studio, and OpenAI itself all do.
+struct TextImprovementConfiguration: Codable, Equatable, Sendable {
+    var provider: ImprovementProviderKind = .appleIntelligence
+    var baseURL: String = ""
+    var model: String = ""
+    var apiKey: String = ""
+
+    init() {}
+
+    /// Tolerant decoding so preferences saved by older builds keep loading.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decodeIfPresent(ImprovementProviderKind.self, forKey: .provider) ?? .appleIntelligence
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
+        apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+    }
+
+    /// Accepts a bare host, a host with /v1, or a full endpoint path.
+    var chatCompletionsEndpoint: URL? {
+        var base = baseURL.trimmingCharacters(in: .whitespaces)
+        guard !base.isEmpty else { return nil }
+        if !base.contains("://") { base = "http://" + base }
+        while base.hasSuffix("/") { base.removeLast() }
+        if base.hasSuffix("/chat/completions") { return URL(string: base) }
+        if base.hasSuffix("/v1") { return URL(string: base + "/chat/completions") }
+        return URL(string: base + "/v1/chat/completions")
+    }
+
+    var isUsable: Bool {
+        switch provider {
+        case .appleIntelligence: true
+        case .openAICompatible: chatCompletionsEndpoint != nil && !model.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+    }
 }
 
 enum ToggleShortcutChoice: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -254,37 +368,6 @@ enum PushShortcutChoice: String, Codable, CaseIterable, Identifiable, Sendable {
         case .controlShiftD: [.control, .shift]
         }
     }
-}
-
-struct DictationProfile: Codable, Identifiable, Equatable, Sendable {
-    var id: UUID
-    var name: String
-    var speechMode: SpeechMode
-    var destination: DestinationKind
-    var markdownBookmark: Data?
-    var markdownDisplayPath: String?
-    var overlayPlacement: OverlayPlacement
-    var glossary: [String]
-    var diarizationEnabled: Bool
-    var spokenCorrectionsEnabled: Bool? = true
-    var condensedOutputEnabled: Bool? = false
-
-    var usesSpokenCorrections: Bool { spokenCorrectionsEnabled ?? true }
-    var producesCondensedOutput: Bool { condensedOutputEnabled ?? false }
-
-    static let standard = DictationProfile(
-        id: UUID(),
-        name: "Quick Dictation",
-        speechMode: .english,
-        destination: .focusedField,
-        markdownBookmark: nil,
-        markdownDisplayPath: nil,
-        overlayPlacement: .menuBar,
-        glossary: ["Apos", "Epos", "Tobisk", "ToskVoice"],
-        diarizationEnabled: false,
-        spokenCorrectionsEnabled: true,
-        condensedOutputEnabled: false
-    )
 }
 
 struct AudioDevice: Identifiable, Hashable, Sendable {

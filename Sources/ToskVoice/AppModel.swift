@@ -12,6 +12,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var statusDetail = "Control–Option–Space to dictate"
     @Published var inputDevices: [AudioDevice] = []
     @Published var outputDevices: [AudioDevice] = []
+    @Published var availableLanguages: [Locale] = []
 
     let preferences: PreferencesStore
     let history: HistoryStore
@@ -33,6 +34,7 @@ final class AppModel: ObservableObject {
     var onOverlayDismissed: (() -> Void)?
     var onMenuNeedsUpdate: (() -> Void)?
     var onMeterLevel: ((Float) -> Void)?
+    var onEditorExpansionRequested: ((String) -> Void)?
 
     private enum ActiveEngine { case apple, whisper }
     private var activeEngine: ActiveEngine?
@@ -43,9 +45,21 @@ final class AppModel: ObservableObject {
         self.modelPacks = modelPacks
         statusDetail = "\(preferences.toggleShortcut.label) to dictate"
         refreshDevices()
+        Task { [weak self] in
+            let languages = await DictationLanguages.available()
+            self?.availableLanguages = languages
+        }
     }
 
-    var profile: DictationProfile { preferences.selectedProfile }
+    /// True when Quick Dictation runs on the bilingual WhisperKit pack, which
+    /// detects the language itself (the language picker is hidden then).
+    var usesBilingualQuickDictation: Bool {
+        preferences.quickDictationModel == .whisperBilingual
+    }
+
+    /// The language dictation actually uses: the picker override when set,
+    /// otherwise English.
+    var effectiveLocale: Locale { preferences.effectiveLocale }
     var displayText: String {
         [finalizedText, volatileText].filter { !$0.isEmpty }.joined(separator: finalizedText.isEmpty ? "" : " ")
     }
@@ -66,7 +80,6 @@ final class AppModel: ObservableObject {
             fail("Microphone access is required")
             return
         }
-        let profile = preferences.selectedProfile
         state = .preparing
         finalizedText = ""
         volatileText = ""
@@ -75,29 +88,29 @@ final class AppModel: ObservableObject {
         timedUtterances = []
         pendingProcessingTask = nil
         pendingCorrection = nil
-        capturedTarget = profile.destination == .focusedField ? CapturedTextTarget.capture() : nil
+        capturedTarget = CapturedTextTarget.capture()
         _ = capturedTarget?.beginListeningPlaceholder()
-        statusDetail = profile.destination == .focusedField && !AXIsProcessTrusted()
+        statusDetail = !AXIsProcessTrusted()
             ? "No Accessibility permission — result will only be copied"
-            : profile.name
-        onOverlayRequested?(profile.overlayPlacement)
+            : "Quick Dictation"
+        onOverlayRequested?(preferences.overlayPlacement)
         onMenuNeedsUpdate?()
         await correctionService.beginDictation(
-            enableEditing: profile.usesSpokenCorrections,
-            enablePolishing: profile.producesCondensedOutput
+            enableEditing: preferences.spokenCorrectionsEnabled,
+            enablePolishing: preferences.condensedOutputEnabled
         )
 
         do {
-            if profile.diarizationEnabled {
+            if preferences.diarizationEnabled {
                 statusDetail = "Preparing speaker model…"
                 _ = try await modelPacks.prepareSpeakerKit()
             }
-            if profile.speechMode == .automaticBilingual {
+            if usesBilingualQuickDictation {
                 statusDetail = "Preparing bilingual model…"
                 let kit = try await modelPacks.prepareWhisper()
                 try whisperSession.start(
                     whisperKit: kit,
-                    glossary: profile.glossary,
+                    glossary: preferences.glossary,
                     inputUID: preferences.selectedInputUID,
                     onText: { [weak self] confirmed, volatile in
                         self?.finalizedText = confirmed
@@ -108,8 +121,8 @@ final class AppModel: ObservableObject {
                 activeEngine = .whisper
             } else {
                 try await speechSession.start(
-                    locale: profile.speechMode.locale,
-                    glossary: profile.glossary,
+                    locale: effectiveLocale,
+                    glossary: preferences.glossary,
                     inputUID: preferences.selectedInputUID,
                     onText: { [weak self] text, isFinal, timing in self?.receive(text: text, isFinal: isFinal, timing: timing) },
                     onLevel: { [weak self] level in self?.receive(level: level) }
@@ -174,14 +187,55 @@ final class AppModel: ObservableObject {
         onMenuNeedsUpdate?()
     }
 
-    func selectProfile(_ id: UUID) {
-        preferences.selectedProfileID = id
-        onMenuNeedsUpdate?()
+    /// Detaches the running dictation from its captured target (the
+    /// listening placeholder is removed, nothing is inserted) and hands the
+    /// text collected so far to the Dictation Editor window.
+    func expandToEditor() {
+        guard state.isActive else { return }
+        let transcript = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            await cancel()
+            statusDetail = "Continued in Edit with Voice"
+            onEditorExpansionRequested?(transcript)
+        }
     }
 
     func selectInput(_ uid: String?) {
         preferences.selectedInputUID = uid
         onMenuNeedsUpdate?()
+    }
+
+    /// Switches the dictation language. While an Apple-engine session is
+    /// listening, the speech engine restarts in place: pending utterances are
+    /// finalized into the ledger first, so no text is lost.
+    func selectLanguage(_ identifier: String) {
+        let changed = effectiveLocale.identifier != identifier
+        preferences.dictationLocaleID = identifier
+        onMenuNeedsUpdate?()
+        guard changed, activeEngine == .apple, state == .listening || state == .correcting else { return }
+        Task { await restartAppleEngineForLanguageChange() }
+    }
+
+    private func restartAppleEngineForLanguageChange() async {
+        guard activeEngine == .apple, !stopRequested else { return }
+        statusDetail = "Switching to \(DictationLanguages.label(for: effectiveLocale))…"
+        _ = await speechSession.stop()
+        await pendingProcessingTask?.value
+        pendingProcessingTask = nil
+        guard state.isActive, !stopRequested else { return }
+        do {
+            try await speechSession.start(
+                locale: effectiveLocale,
+                glossary: preferences.glossary,
+                inputUID: preferences.selectedInputUID,
+                onText: { [weak self] text, isFinal, timing in self?.receive(text: text, isFinal: isFinal, timing: timing) },
+                onLevel: { [weak self] level in self?.receive(level: level) }
+            )
+            statusDetail = "Listening in \(DictationLanguages.label(for: effectiveLocale))"
+        } catch {
+            fail(error.localizedDescription)
+            await speechSession.cancel()
+        }
     }
 
     func selectOutput(_ uid: String?) {
@@ -190,24 +244,18 @@ final class AppModel: ObservableObject {
     }
 
     func toggleDiarization() {
-        var value = preferences.selectedProfile
-        value.diarizationEnabled.toggle()
-        preferences.selectedProfile = value
-        if value.diarizationEnabled { Task { _ = try? await modelPacks.prepareSpeakerKit() } }
+        preferences.diarizationEnabled.toggle()
+        if preferences.diarizationEnabled { Task { _ = try? await modelPacks.prepareSpeakerKit() } }
         onMenuNeedsUpdate?()
     }
 
     func toggleSpokenCorrections() {
-        var value = preferences.selectedProfile
-        value.spokenCorrectionsEnabled = !value.usesSpokenCorrections
-        preferences.selectedProfile = value
+        preferences.spokenCorrectionsEnabled.toggle()
         onMenuNeedsUpdate?()
     }
 
     func toggleCondensedOutput() {
-        var value = preferences.selectedProfile
-        value.condensedOutputEnabled = !value.producesCondensedOutput
-        preferences.selectedProfile = value
+        preferences.condensedOutputEnabled.toggle()
         onMenuNeedsUpdate?()
     }
 
@@ -233,7 +281,7 @@ final class AppModel: ObservableObject {
     }
 
     private func processFinalUtterance(_ text: String, timing: TimedUtterance? = nil) async {
-        guard preferences.selectedProfile.usesSpokenCorrections else {
+        guard preferences.spokenCorrectionsEnabled else {
             ledger.append(text)
             if let timing { timedUtterances.append(timing) }
             finalizedText = ledger.text
@@ -305,7 +353,7 @@ final class AppModel: ObservableObject {
     }
 
     private func applySpeakerLabels(audio: [Float]) async {
-        guard preferences.selectedProfile.diarizationEnabled, let kit = modelPacks.speakerKit else { return }
+        guard preferences.diarizationEnabled, let kit = modelPacks.speakerKit else { return }
         statusDetail = "Identifying speakers…"
         do {
             let labels = try await speakerLabeler.labels(audio: audio, utterances: timedUtterances, using: kit)
@@ -327,8 +375,7 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let profile = preferences.selectedProfile
-        if profile.producesCondensedOutput {
+        if preferences.condensedOutputEnabled {
             state = .correcting
             statusDetail = "Polishing final text…"
             onMenuNeedsUpdate?()
@@ -342,36 +389,22 @@ final class AppModel: ObservableObject {
         var succeeded = false
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        switch profile.destination {
-        case .focusedField:
-            if let capturedTarget {
-                await capturedTarget.focusCapturedField()
-                if capturedTarget.hasListeningPlaceholder {
-                    succeeded = await capturedTarget.replaceListeningPlaceholder(with: text)
-                }
-                if !succeeded {
-                    succeeded = await capturedTarget.insert(text)
-                }
+        if let capturedTarget {
+            await capturedTarget.focusCapturedField()
+            if capturedTarget.hasListeningPlaceholder {
+                succeeded = await capturedTarget.replaceListeningPlaceholder(with: text)
             }
             if !succeeded {
-                destinationDescription = "Clipboard fallback"
+                succeeded = await capturedTarget.insert(text)
             }
-        case .markdown:
-            await capturedTarget?.removeListeningPlaceholder()
-            if let bookmark = profile.markdownBookmark {
-                do {
-                    let path = try TextDelivery.appendMarkdown(text, bookmark: bookmark)
-                    destinationDescription = path
-                    succeeded = true
-                } catch {
-                    statusDetail = error.localizedDescription
-                }
-            }
+        }
+        if !succeeded {
+            destinationDescription = "Clipboard fallback"
         }
         capturedTarget = nil
 
-        history.add(HistoryEntry(text: text, profileName: profile.name, destinationDescription: destinationDescription))
-        let accessibilityMissing = profile.destination == .focusedField && !AXIsProcessTrusted()
+        history.add(HistoryEntry(text: text, profileName: "Quick Dictation", destinationDescription: destinationDescription))
+        let accessibilityMissing = !AXIsProcessTrusted()
         state = succeeded
             ? .committed
             : .failed(accessibilityMissing
@@ -401,7 +434,7 @@ final class AppModel: ObservableObject {
     private func fail(_ message: String) {
         state = .failed(message)
         statusDetail = message
-        onOverlayRequested?(preferences.selectedProfile.overlayPlacement)
+        onOverlayRequested?(preferences.overlayPlacement)
         onMenuNeedsUpdate?()
         dismissSoon()
     }
