@@ -1,0 +1,36 @@
+name: Release
+
+# Forgejo is the authoritative CI. Semantic-release lives here — not on the GitHub
+# mirror — so the version tag is created from Conventional Commits on main. GitHub
+# receives the push mirror, reacts to the `v*` tag, and builds + publishes the
+# (unsigned) Apple Silicon application. The ToskVoice test suite requires the macOS 26
+# SDK, which the Forgejo runners do not provide, so no tests run in this pipeline.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ forgejo.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Semantic Release
+    runs-on: ubuntu-latest
+    container:
+      image: registry.tokenet.de/shared/build-environments/default:latest
+    if: forgejo.ref == 'refs/heads/main' && forgejo.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+
+      - name: Install release tooling
+        run: npm ci
+
+      - name: Run semantic-release
+        run: npx semantic-release

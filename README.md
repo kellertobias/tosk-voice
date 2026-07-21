@@ -87,6 +87,36 @@ The build script prefers `/Applications/Xcode.app` when installed. If `TOSKVOICE
 
 SwiftPM downloads pinned source dependencies automatically. The small arm64 LAME executable and license texts are vendored for reproducible MP3 export builds. The root `Brewfile` remains available for refreshing that tool.
 
+## Releases
+
+Releases are automated with [Conventional Commits](https://www.conventionalcommits.org/). The `type:` prefix of each commit on `main` decides the version bump:
+
+| Commit type | Release |
+| --- | --- |
+| `fix:`, `perf:` | patch (`x.y.Z`) |
+| `feat:` | minor (`x.Y.z`) |
+| `!` after the type/scope, or a `BREAKING CHANGE:` footer | major (`X.y.z`) |
+| `docs:`, `refactor:`, `test:`, `style:`, `build:`, `ci:`, `chore:` | none |
+
+The pipeline is split across two hosts, because [git.tokenet.de](https://git.tokenet.de/opensource/tosk-voice) is the authoritative CI and GitHub is a push mirror:
+
+- **Forgejo** (`.forgejo/workflows/release.yml`) runs on every push to `main`. [`semantic-release`](https://semantic-release.gitbook.io/) analyses the commits, writes the new version to `VERSION`, updates `CHANGELOG.md`, commits `chore(release): vX.Y.Z [skip ci]`, and pushes the `vX.Y.Z` tag. `VERSION` is the single authoritative version source; `./build` reads it and stamps `CFBundleShortVersionString`.
+- **GitHub** (`.github/workflows/release.yml`) reacts to the mirrored `v*` tag: it builds the app on a `macos-26` runner via `./build archive` and publishes a GitHub release with the arm64 ZIP and its `.sha256`. The build is **not** signed or notarized (no Apple Developer account) — it uses an ad-hoc signature, so macOS warns on first launch. Only the `v*` tag builds and publishes; you can also trigger the workflow manually from the Actions tab to rebuild a tag or test-build a branch without publishing.
+
+The first release-worthy commit produces `v1.0.0`.
+
+Requirements:
+
+- Forgejo secret `SEMANTIC_RELEASE_TOKEN` with repository write access, so the release job can push the release commit and tag past branch protection.
+- The Forgejo → GitHub push mirror must forward tags (it does by default) so the `v*` tag reaches GitHub.
+
+Preview the next version and notes without releasing:
+
+```sh
+npm ci
+npm run release:dry
+```
+
 ## Edit with Voice
 
 Open **Edit with Voice...** from the right-click menu (or expand a running dictation from the overlay) to work on a transcript or any text file in a regular window: dictation follows the cursor, selections can be spoken over, and **Improve Result** removes filler words and stutters using Apple Intelligence or a configurable OpenAI-compatible endpoint (Ollama, mlx, OpenAI) set in Settings → General.

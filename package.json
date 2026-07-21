@@ -1,0 +1,18 @@
+{
+  "name": "toskvoice-release",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Release automation tooling for ToskVoice. Not shipped in the app; used only by the Forgejo release pipeline.",
+  "scripts": {
+    "release": "semantic-release",
+    "release:dry": "semantic-release --dry-run --no-ci"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/exec": "^7.1.0",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/release-notes-generator": "^14.1.1",
+    "semantic-release": "^25.0.5"
+  }
+}

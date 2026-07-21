@@ -1,0 +1,89 @@
+name: Release
+
+# The GitHub repository is a push mirror of Forgejo, which is the authoritative CI and
+# creates the version tag via semantic-release. GitHub only reacts to the mirrored tag:
+# it builds the Apple Silicon application and publishes a GitHub release with the
+# archive attached.
+#
+# The build is NOT code-signed or notarized — there is no Apple Developer account — so
+# `./build` falls back to an ad-hoc signature. macOS will warn on first launch; the
+# release notes tell users how to approve it.
+#
+# Only a mirrored `v*` tag builds and publishes a release, so no `macos-26` minutes are
+# spent on ordinary commits. `workflow_dispatch` allows rebuilding an existing tag, or
+# building an arbitrary branch/ref without publishing, on demand.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish (e.g. v1.2.3). Leave empty to build the current ref without publishing.
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: macOS (Apple Silicon, unsigned)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Build the unsigned Apple Silicon archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          # On a tag build, pin the artifact version to the tag so the filename and the
+          # bundle version agree with the release, regardless of the committed VERSION file.
+          ref="${{ github.event.inputs.tag || github.ref_name }}"
+          case "$ref" in
+            v*) export TOSKVOICE_VERSION="${ref#v}" ;;
+          esac
+          ./build archive
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ToskVoice-macos-arm64
+          path: artifacts/*
+          if-no-files-found: error
+
+  # Tag-only. A branch build stops after `build`, leaving its artifacts attached to the
+  # workflow run so packaging can be checked without publishing a release.
+  publish:
+    name: Publish GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.event.inputs.tag, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ToskVoice-macos-arm64
+          path: artifacts
+
+      - name: Publish the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: artifacts/*
+          fail_on_unmatched_files: true
+          body: |
+            Native, local-first dictation for Apple Silicon Macs.
+
+            **This build is not signed or notarized** (no Apple Developer account). On
+            first launch macOS will block it. To open it:
+
+            1. Unzip and move `ToskVoice.app` to `/Applications`.
+            2. Try to open it once, then approve it under
+               **System Settings → Privacy & Security → Open Anyway**.
+
+            Requires macOS 26 (Tahoe) or newer on Apple Silicon. Verify the download
+            with the attached `.sha256` file.
