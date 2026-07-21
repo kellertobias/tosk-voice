@@ -6,13 +6,18 @@ name: Release
 # (unsigned) Apple Silicon application. The ToskVoice test suite requires the macOS 26
 # SDK, which the Forgejo runners do not provide, so no tests run in this pipeline.
 #
-# Do NOT add `[skip ci]` (or `[ci skip]`, `[no ci]`, `[skip actions]`) to the
-# semantic-release commit message (.releaserc.json). The `v*` tag points at that
-# commit, and GitHub honours skip-ci markers on the commit a tag references, so the
-# mirrored tag build would be silently skipped and no GitHub release would publish.
-# The release commit re-triggers this job once, but semantic-release derives the next
-# version from the last git tag, finds no commits since the fresh tag, and exits — a
-# harmless no-op. That tag-based check is the loop guard; keep it.
+# The `v*` tag points at the semantic-release commit, and GitHub honours skip-ci
+# markers ([skip ci], [ci skip], [no ci], [skip actions]) on the commit a tag
+# references — such a marker would silently skip the mirrored tag build so no GitHub
+# release publishes. Two rules keep that from happening, both in .releaserc.json:
+#   1. The commit message must NOT contain a skip-ci marker.
+#   2. The commit message is subject-only ("chore(release): vX.Y.Z") with NO notes
+#      body. The notes list prior commit subjects, and any of those may itself contain
+#      a literal skip-ci marker, which would leak into the tagged commit's message.
+# The notes still reach CHANGELOG.md and the GitHub release; only the commit body drops
+# them. Loop prevention does not rely on skip-ci: semantic-release derives the next
+# version from the last git tag, so the release commit re-triggers this job once and
+# exits with no commits since the fresh tag — a harmless no-op.
 
 on:
   push:
