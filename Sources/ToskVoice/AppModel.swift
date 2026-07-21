@@ -64,6 +64,16 @@ final class AppModel: ObservableObject {
         [finalizedText, volatileText].filter { !$0.isEmpty }.joined(separator: finalizedText.isEmpty ? "" : " ")
     }
 
+    /// Copies the transcript collected so far to the clipboard without
+    /// finishing the session, so it can keep listening.
+    func copyTranscript() {
+        let text = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        statusDetail = "Copied to clipboard"
+    }
+
     func refreshDevices() {
         let all = AudioDeviceManager.devices()
         inputDevices = all.filter(\.hasInput)

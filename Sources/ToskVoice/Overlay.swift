@@ -128,47 +128,55 @@ private struct OverlayView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if model.state.isActive {
-                    Button {
-                        model.expandToEditor()
-                    } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .frame(width: 26, height: 26)
-                            .contentShape(Rectangle())
-                    }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Expand into Edit with Voice")
-                        .help("Expand into the Edit with Voice window — the dictation detaches from the target field and continues there")
-                    Button {
-                        Task { await model.cancel() }
-                    } label: {
-                        Image(systemName: "trash")
-                            .frame(width: 26, height: 26)
-                            .contentShape(Rectangle())
-                    }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Discard dictation")
-                        .help("Discard dictation")
-                    Button {
-                        Task { await model.stop() }
-                    } label: {
-                        ZStack(alignment: .bottomTrailing) {
-                            Image(systemName: "stop.fill")
-                                .font(.system(size: 14, weight: .semibold))
-                                .frame(width: 20, height: 20)
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 10, weight: .bold))
-                                .symbolRenderingMode(.palette)
-                                .foregroundStyle(.white, .green)
-                                .offset(x: 3, y: 3)
+                    VStack(alignment: .trailing, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Button {
+                                model.expandToEditor()
+                            } label: {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .frame(width: 26, height: 26)
+                                    .contentShape(Rectangle())
+                            }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("Expand into Edit with Voice")
+                                .help("Expand into the Edit with Voice window — the dictation detaches from the target field and continues there")
+                            Button {
+                                model.copyTranscript()
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .frame(width: 26, height: 26)
+                                    .contentShape(Rectangle())
+                            }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("Copy transcript")
+                                .help("Copy the transcript so far to the clipboard — keeps listening")
+                            Button {
+                                Task { await model.stop() }
+                            } label: {
+                                Image(systemName: "text.insert")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 28, height: 28)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.green)
+                            .accessibilityLabel("Finish and insert dictation")
+                            .help("Finish and insert dictation")
                         }
-                        .frame(width: 28, height: 28)
+                        Button {
+                            Task { await model.cancel() }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .frame(width: 26, height: 26)
+                                .contentShape(Rectangle())
+                        }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Discard dictation")
+                            .help("Discard dictation")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.accentColor)
-                    .accessibilityLabel("Finish and insert dictation")
-                    .help("Finish and insert dictation")
                 }
             }
 
