@@ -101,7 +101,10 @@ final class DictationEditorWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        Task { await controller.stop() }
+        Task {
+            await controller.stop()
+            controller.resetDocument()
+        }
     }
 
     /// Left Control (key code 59) is the push-to-talk key while this window

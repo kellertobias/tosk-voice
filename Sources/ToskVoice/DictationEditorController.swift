@@ -444,6 +444,21 @@ final class DictationEditorController: ObservableObject {
         status = "Copied to Clipboard"
     }
 
+    /// Empties the document so reopening the window starts blank. Called when
+    /// the window closes, after the session has been stopped.
+    func resetDocument() {
+        bridge?.replaceDocument(with: "")
+        bridge?.clearVolatile()
+        bridge?.discardAnchor()
+        pendingDocument = nil
+        fileURL = nil
+        isDirty = false
+        sessionStart = nil
+        whisperInsertedPrefix = ""
+        refreshContentState()
+        status = "Ready"
+    }
+
     /// Writes to the opened file, or falls back to Save As when the document
     /// has no file yet. Returns true when the file was written.
     @discardableResult
