@@ -1,3 +1,11 @@
+## [1.0.1](https://git.tokenet.de/opensource/tosk-voice/compare/v1.0.0...v1.0.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* publish GitHub release by removing [skip ci] from release commit ([036cec6](https://git.tokenet.de/opensource/tosk-voice/commit/036cec67c5229937945177b0b667a11ab5631d1e))
+* trigger the mirrored release build ([8ed06a0](https://git.tokenet.de/opensource/tosk-voice/commit/8ed06a04a3efbddfec50e23703abe96aaf7695ac))
+
 # 1.0.0 (2026-07-21)
 
 
