@@ -83,6 +83,7 @@ final class AppModel: ObservableObject {
         state = .preparing
         finalizedText = ""
         volatileText = ""
+        waveform = Array(repeating: Float(0.06), count: 56)
         ledger = TranscriptLedger()
         stopRequested = false
         timedUtterances = []
